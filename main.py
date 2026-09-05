@@ -25,11 +25,15 @@ PUBLIC_PATHS = ("/api/login", "/api/health", "/login.html", "/login.js", "/style
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    """除登录接口和静态资源外，其余均需登录。"""
+    """除登录接口和静态资源外，其余均需登录；登录后每次请求滑动刷新会话超时。"""
     path = request.url.path
     public = any(path.startswith(p) for p in PUBLIC_PATHS)
     if public or auth.is_authenticated(request):
-        return await call_next(request)
+        response = await call_next(request)
+        # 已登录请求：滑动刷新最后活动时间（空闲超时）
+        if not public and auth.is_authenticated(request):
+            auth.refresh_session_activity(request, response)
+        return response
     # 页面请求重定向到登录页，API 请求返回 401
     if path.startswith("/api/"):
         return JSONResponse({"error": "未登录"}, status_code=401)
@@ -72,6 +76,8 @@ def admin_settings():
         "settings": db.get_all_settings(),
         "root_dir": db.get_root_dir(),
         "username": db.get_username(),
+        "session_refresh_interval": db.get_session_refresh_interval(),
+        "session_timeout": db.get_session_timeout(),
     }
 
 
@@ -109,6 +115,40 @@ def admin_change_root(body: ChangeRootBody):
         return JSONResponse({"error": "目录不存在或不是目录"}, status_code=400)
     db.set_root_dir(str(p))
     return {"ok": True, "root_dir": str(p)}
+
+
+class ChangeRefreshIntervalBody(BaseModel):
+    seconds: int
+
+
+@app.post("/api/admin/refresh-interval")
+def admin_change_refresh_interval(body: ChangeRefreshIntervalBody):
+    """修改会话详情自动刷新间隔（秒）。最小 2 秒。"""
+    try:
+        seconds = int(body.seconds)
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "间隔必须是整数"}, status_code=400)
+    if seconds < 2:
+        return JSONResponse({"error": "间隔至少 2 秒"}, status_code=400)
+    db.set_session_refresh_interval(seconds)
+    return {"ok": True, "session_refresh_interval": seconds}
+
+
+class ChangeSessionTimeoutBody(BaseModel):
+    minutes: int
+
+
+@app.post("/api/admin/session-timeout")
+def admin_change_session_timeout(body: ChangeSessionTimeoutBody):
+    """修改登录会话空闲超时时长（分钟）。最小 1 分钟。"""
+    try:
+        minutes = int(body.minutes)
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "超时时长必须是整数"}, status_code=400)
+    if minutes < 1:
+        return JSONResponse({"error": "超时时长至少 1 分钟"}, status_code=400)
+    db.set_session_timeout(minutes)
+    return {"ok": True, "session_timeout": minutes}
 
 
 # ---- 文件浏览 ----

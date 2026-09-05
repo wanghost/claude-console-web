@@ -69,6 +69,6 @@ echo.
 :: Open browser after 1 second
 start "" cmd /c "timeout /t 1 /nobreak >nul & start http://127.0.0.1:%PORT%"
 
-venv\Scripts\python.exe -m uvicorn main:app --host 0.0.0.0 --port %PORT%
+venv\Scripts\python.exe -m uvicorn main:app --host 0.0.0.0 --port %PORT% --reload
 
 pause

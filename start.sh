@@ -43,4 +43,4 @@ echo
 echo "   按 Ctrl+C 停止服务"
 echo
 
-exec venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8080
+exec venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8080 --reload

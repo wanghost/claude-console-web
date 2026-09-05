@@ -4,7 +4,7 @@ let currentPath = '';
 let currentSessionId = null;
 let pollTimer = null;
 let sessionRefreshTimer = null;
-const SESSION_REFRESH_INTERVAL = 10000; // 会话详情自动刷新间隔（毫秒）
+let sessionRefreshInterval = 10; // 会话详情自动刷新间隔（秒），可从系统管理修改
 
 function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({
@@ -357,16 +357,16 @@ async function openSession(id) {
   }
 }
 
-// 会话详情定时自动刷新（间隔 SESSION_REFRESH_INTERVAL 毫秒）
+// 会话详情定时自动刷新（间隔由 sessionRefreshInterval 秒决定）
 function startSessionRefresh() {
   stopSessionRefresh();
   sessionRefreshTimer = setInterval(() => {
     refreshChat(currentSessionId);
-  }, SESSION_REFRESH_INTERVAL);
+  }, sessionRefreshInterval * 1000);
 }
 
 // 仅刷新消息区，保留输入框内容与已选择的模型/权限/Effort 选项
-async function refreshChat(id) {
+async function refreshChat(id, opts = {}) {
   if (!id || currentView !== 'session' || currentSessionId !== id) {
     stopSessionRefresh();
     return;
@@ -375,8 +375,10 @@ async function refreshChat(id) {
     const data = await api('/api/sessions/' + id);
     updateChatMessages(data);
   } catch (e) {
-    // 网络异常或会话被删：静默停止，避免刷屏
-    stopSessionRefresh();
+    // 手动刷新（force）失败不停止自动刷新；自动刷新失败才静默停止，避免刷屏
+    if (!opts.force) {
+      stopSessionRefresh();
+    }
   }
 }
 
@@ -391,17 +393,35 @@ function updateChatMessages(data) {
   }
   let html = '';
   for (const m of msgs) {
-    html += '<div class="msg ' + m.role + '">' + esc(m.text) + '</div>';
+    html += renderMessage(m);
   }
   chatEl.innerHTML = html;
   // 出现新内容时始终滚动到底部
   scrollChatToBottom();
 }
 
+// 渲染单条消息（user 消息附复制/编辑按钮）
+function renderMessage(m) {
+  let html = '<div class="msg ' + m.role + '">' + esc(m.text) + '</div>';
+  if (m.role === 'user') {
+    html += '<div class="msg-actions">'
+      + '<button class="msg-action-btn" data-action="copy" data-text="' + esc(m.text) + '">复制</button>'
+      + '<button class="msg-action-btn" data-action="edit" data-text="' + esc(m.text) + '">编辑</button>'
+      + '</div>';
+  }
+  return html;
+}
+
 function renderChat(data) {
   content.classList.add('chat-mode');
   let html = '<div class="chat-wrap">';
-  html += '<button class="back-btn" onclick="showSessions()">← 返回会话列表</button>';
+  html += '<div class="chat-topbar">'
+    + '<button class="back-btn" onclick="showSessions()">← 返回会话列表</button>'
+    + '<div class="chat-topbar-actions">'
+    + '<button class="refresh-sess-btn" id="history-btn" title="查看本会话的对话历史">对话历史</button>'
+    + '<button class="refresh-sess-btn" id="refresh-sess-btn" title="手动刷新会话内容">⟳ 刷新</button>'
+    + '</div>'
+    + '</div>';
   if (data.cwd) {
     html += '<div class="file-head"><span class="path">工作目录：' + esc(data.cwd) + '</span>'
       + '<button class="secondary" id="open-cwd-btn">打开所在目录</button></div>';
@@ -411,7 +431,7 @@ function renderChat(data) {
     html += '<div class="fs-empty">无消息</div>';
   } else {
     for (const m of data.messages) {
-      html += '<div class="msg ' + m.role + '">' + esc(m.text) + '</div>';
+      html += renderMessage(m);
     }
   }
   html += '</div>';
@@ -433,6 +453,36 @@ function renderChat(data) {
   if (cwdBtn) {
     cwdBtn.addEventListener('click', () => openSessionDir(currentSessionId));
   }
+  const refreshBtn = document.getElementById('refresh-sess-btn');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', async () => {
+      refreshBtn.disabled = true;
+      try {
+        await refreshChat(currentSessionId, { force: true });
+      } finally {
+        refreshBtn.disabled = false;
+      }
+    });
+  }
+  const historyBtn = document.getElementById('history-btn');
+  if (historyBtn) {
+    historyBtn.addEventListener('click', showHistory);
+  }
+  // 消息操作按钮（复制/编辑）事件委托
+  const chatEl = content.querySelector('.chat');
+  if (chatEl) {
+    chatEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('.msg-action-btn');
+      if (!btn) return;
+      const action = btn.dataset.action;
+      const text = btn.dataset.text;
+      if (action === 'copy') {
+        copyText(text);
+      } else if (action === 'edit') {
+        editMessage(text);
+      }
+    });
+  }
   // 滚动消息区到底部（等下一帧布局完成后再滚，确保移动端 scrollHeight 已更新）
   scrollChatToBottom();
 }
@@ -443,6 +493,141 @@ function scrollChatToBottom() {
   requestAnimationFrame(() => {
     chatEl.scrollTop = chatEl.scrollHeight;
   });
+}
+
+// ---- 消息复制/编辑 ----
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      // 兼容不支持 clipboard API 的环境
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+    // 短暂提示
+    flashHint('已复制');
+  } catch (e) {
+    alert('复制失败：' + e.message);
+  }
+}
+
+function editMessage(text) {
+  const input = document.getElementById('reply-input');
+  if (!input) return;
+  if (input.value.trim() === '') {
+    input.value = text;
+    input.focus();
+    return;
+  }
+  // 输入框已有内容，询问是否清空
+  if (confirm('输入框已有内容，是否清空后再编辑？')) {
+    input.value = text;
+    input.focus();
+  }
+}
+
+function flashHint(msg) {
+  let hint = document.getElementById('flash-hint');
+  if (!hint) {
+    hint = document.createElement('div');
+    hint.id = 'flash-hint';
+    document.body.appendChild(hint);
+  }
+  hint.textContent = msg;
+  hint.classList.add('show');
+  setTimeout(() => hint.classList.remove('show'), 1200);
+}
+
+// ---- 对话历史（当前会话中我说过的话）----
+let historyData = null;
+
+async function showHistory() {
+  if (!currentSessionId) return;
+  try {
+    const data = await api('/api/sessions/' + currentSessionId);
+    const userMsgs = (data.messages || []).filter((m) => m.role === 'user');
+    historyData = { title: userMsgs.length ? userMsgs[0].text.slice(0, 40) : '会话', messages: userMsgs };
+    renderHistory();
+  } catch (e) {
+    alert('加载对话历史失败：' + e.message);
+  }
+}
+
+function renderHistory() {
+  const msgs = historyData ? historyData.messages : [];
+  let html = '<div class="history-wrap">';
+  html += '<div class="chat-topbar">'
+    + '<button class="back-btn" id="history-back-btn">← 返回会话</button>'
+    + '</div>';
+  html += '<div class="history-head"><span class="history-title">对话历史（共 ' + msgs.length + ' 条）</span>'
+    + '<div class="history-actions">'
+    + '<button class="secondary" id="history-copy-all">全部复制</button>'
+    + '<button id="history-download">下载 MD</button>'
+    + '</div></div>';
+  html += '<div class="history-list">';
+  if (!msgs.length) {
+    html += '<div class="fs-empty">本会话还没有你说过的话</div>';
+  } else {
+    for (const m of msgs) {
+      html += '<div class="history-item">'
+        + '<div class="history-ts">' + esc(m.ts || '') + '</div>'
+        + '<div class="history-text">' + esc(m.text) + '</div>'
+        + '</div>';
+    }
+  }
+  html += '</div>';
+  html += '</div>';
+  content.innerHTML = html;
+
+  document.getElementById('history-back-btn').addEventListener('click', () => {
+    openSession(currentSessionId);
+  });
+  document.getElementById('history-copy-all').addEventListener('click', () => {
+    copyText(historyText());
+  });
+  document.getElementById('history-download').addEventListener('click', () => {
+    downloadHistoryMd();
+  });
+}
+
+function historyText() {
+  const msgs = historyData ? historyData.messages : [];
+  return msgs.map((m) => (m.ts ? '[' + m.ts + '] ' : '') + m.text).join('\n\n');
+}
+
+function historyMd() {
+  const msgs = historyData ? historyData.messages : [];
+  const title = historyData ? historyData.title : '会话';
+  let md = '# ' + title + '\n\n';
+  md += '> 本文件由 Claude Console 导出\n\n';
+  for (const m of msgs) {
+    md += (m.ts ? '**' + m.ts + '**\n\n' : '') + m.text + '\n\n---\n\n';
+  }
+  return md;
+}
+
+function downloadHistoryMd() {
+  const blob = new Blob([historyMd()], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const title = historyData ? historyData.title : '会话历史';
+  a.href = url;
+  a.download = '对话历史_' + sanitizeFilename(title) + '.md';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function sanitizeFilename(s) {
+  return s.replace(/[\\/:*?"<>|]/g, '_').slice(0, 50) || '会话';
 }
 
 async function openSessionDir(sessionId) {
@@ -623,6 +808,24 @@ function renderAdmin(data) {
   html += '<div class="admin-msg" id="root-msg"></div>';
   html += '</div>';
 
+  // 会话刷新间隔
+  html += '<div class="admin-card">';
+  html += '<div class="admin-card-title">会话内容刷新间隔</div>';
+  html += '<label>打开会话后，消息列表自动刷新的时间间隔（单位：秒，最小 2 秒）</label>';
+  html += '<input type="number" id="refresh-interval-input" min="2" step="1" value="' + esc(String(data.session_refresh_interval || 10)) + '">';
+  html += '<button id="save-refresh-interval-btn">保存间隔</button>';
+  html += '<div class="admin-msg" id="refresh-interval-msg"></div>';
+  html += '</div>';
+
+  // 登录会话超时
+  html += '<div class="admin-card">';
+  html += '<div class="admin-card-title">登录会话超时时长</div>';
+  html += '<label>登录后无操作超过此时长将自动退出（单位：分钟，最小 1 分钟）</label>';
+  html += '<input type="number" id="session-timeout-input" min="1" step="1" value="' + esc(String(data.session_timeout || 30)) + '">';
+  html += '<button id="save-session-timeout-btn">保存时长</button>';
+  html += '<div class="admin-msg" id="session-timeout-msg"></div>';
+  html += '</div>';
+
   html += '</div>';
   content.innerHTML = html;
 
@@ -675,7 +878,67 @@ function renderAdmin(data) {
       btn.disabled = false;
     }
   });
+
+  // 保存刷新间隔
+  document.getElementById('save-refresh-interval-btn').addEventListener('click', async () => {
+    const input = document.getElementById('refresh-interval-input');
+    const msg = document.getElementById('refresh-interval-msg');
+    const val = parseInt(input.value, 10);
+    if (!val || val < 2) { msg.textContent = '请输入不小于 2 的整数秒数'; msg.style.color = '#d64545'; return; }
+    const btn = document.getElementById('save-refresh-interval-btn');
+    btn.disabled = true;
+    try {
+      const res = await api('/api/admin/refresh-interval', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seconds: val }),
+      });
+      sessionRefreshInterval = res.session_refresh_interval;
+      msg.textContent = '已保存，下次打开会话生效';
+      msg.style.color = 'var(--accent-dark)';
+    } catch (e) {
+      msg.textContent = '保存失败：' + e.message;
+      msg.style.color = '#d64545';
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // 保存登录会话超时
+  document.getElementById('save-session-timeout-btn').addEventListener('click', async () => {
+    const input = document.getElementById('session-timeout-input');
+    const msg = document.getElementById('session-timeout-msg');
+    const val = parseInt(input.value, 10);
+    if (!val || val < 1) { msg.textContent = '请输入不小于 1 的整数分钟数'; msg.style.color = '#d64545'; return; }
+    const btn = document.getElementById('save-session-timeout-btn');
+    btn.disabled = true;
+    try {
+      await api('/api/admin/session-timeout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ minutes: val }),
+      });
+      msg.textContent = '已保存，新超时对后续登录会话生效';
+      msg.style.color = 'var(--accent-dark)';
+    } catch (e) {
+      msg.textContent = '保存失败：' + e.message;
+      msg.style.color = '#d64545';
+    } finally {
+      btn.disabled = false;
+    }
+  });
 }
 
-// 启动：默认会话视图
-showSessions();
+// 启动：加载刷新间隔设置后，默认进入会话视图
+async function init() {
+  try {
+    const data = await api('/api/admin/settings');
+    if (data.session_refresh_interval) {
+      sessionRefreshInterval = data.session_refresh_interval;
+    }
+  } catch (e) {
+    // 忽略，使用默认 10 秒
+  }
+  showSessions();
+}
+init();

@@ -157,6 +157,32 @@ def set_root_dir(value: str) -> None:
     set_setting("root_dir", value)
 
 
+# 会话详情自动刷新间隔（单位：秒）。默认 10 秒，最小 2 秒。
+def get_session_refresh_interval() -> int:
+    try:
+        val = int(get_setting("session_refresh_interval", "10"))
+    except (TypeError, ValueError):
+        val = 10
+    return max(val, 2)
+
+
+def set_session_refresh_interval(seconds: int) -> None:
+    set_setting("session_refresh_interval", str(max(int(seconds), 2)))
+
+
+# 登录会话空闲超时时长（单位：分钟）。默认 30 分钟，最小 1 分钟。
+def get_session_timeout() -> int:
+    try:
+        val = int(get_setting("session_timeout", "30"))
+    except (TypeError, ValueError):
+        val = 30
+    return max(val, 1)
+
+
+def set_session_timeout(minutes: int) -> None:
+    set_setting("session_timeout", str(max(int(minutes), 1)))
+
+
 def get_secret_key() -> str:
     return get_setting("secret_key", "please-change-this-secret-key")
 
