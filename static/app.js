@@ -3,6 +3,8 @@ let currentView = 'sessions';
 let currentPath = '';
 let currentSessionId = null;
 let pollTimer = null;
+let sessionRefreshTimer = null;
+const SESSION_REFRESH_INTERVAL = 10000; // 会话详情自动刷新间隔（毫秒）
 
 function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({
@@ -42,6 +44,7 @@ document.querySelectorAll('.tab').forEach((tab) => {
     const view = tab.dataset.view;
     currentView = view;
     stopPoll();
+    stopSessionRefresh();
     if (view === 'files') {
       showFiles(currentPath || '');
     } else if (view === 'sessions') {
@@ -61,6 +64,7 @@ document.getElementById('logout-btn').addEventListener('click', async () => {
 async function showFiles(path = '') {
   currentPath = path;
   currentView = 'files';
+  stopSessionRefresh();
   content.classList.remove('chat-mode');
   content.innerHTML = '<div class="fs-empty">加载中...</div>';
   try {
@@ -188,6 +192,7 @@ function renderEditor(data) {
 // ---- 会话列表 ----
 async function showSessions() {
   currentView = 'sessions';
+  stopSessionRefresh();
   content.classList.remove('chat-mode');
   content.innerHTML = '<div class="fs-empty">加载中...</div>';
   try {
@@ -346,9 +351,51 @@ async function openSession(id) {
   try {
     const data = await api('/api/sessions/' + id);
     renderChat(data);
+    startSessionRefresh();
   } catch (e) {
     content.innerHTML = '<div class="fs-empty">' + esc(e.message) + '</div>';
   }
+}
+
+// 会话详情定时自动刷新（间隔 SESSION_REFRESH_INTERVAL 毫秒）
+function startSessionRefresh() {
+  stopSessionRefresh();
+  sessionRefreshTimer = setInterval(() => {
+    refreshChat(currentSessionId);
+  }, SESSION_REFRESH_INTERVAL);
+}
+
+// 仅刷新消息区，保留输入框内容与已选择的模型/权限/Effort 选项
+async function refreshChat(id) {
+  if (!id || currentView !== 'session' || currentSessionId !== id) {
+    stopSessionRefresh();
+    return;
+  }
+  try {
+    const data = await api('/api/sessions/' + id);
+    updateChatMessages(data);
+  } catch (e) {
+    // 网络异常或会话被删：静默停止，避免刷屏
+    stopSessionRefresh();
+  }
+}
+
+// 只更新消息列表 DOM，不动输入框与选项框
+function updateChatMessages(data) {
+  const chatEl = content.querySelector('.chat');
+  if (!chatEl) return;
+  const msgs = data.messages || [];
+  if (msgs.length === 0) {
+    chatEl.innerHTML = '<div class="fs-empty">无消息</div>';
+    return;
+  }
+  let html = '';
+  for (const m of msgs) {
+    html += '<div class="msg ' + m.role + '">' + esc(m.text) + '</div>';
+  }
+  chatEl.innerHTML = html;
+  // 出现新内容时始终滚动到底部
+  scrollChatToBottom();
 }
 
 function renderChat(data) {
@@ -386,9 +433,16 @@ function renderChat(data) {
   if (cwdBtn) {
     cwdBtn.addEventListener('click', () => openSessionDir(currentSessionId));
   }
-  // 滚动消息区到底部
+  // 滚动消息区到底部（等下一帧布局完成后再滚，确保移动端 scrollHeight 已更新）
+  scrollChatToBottom();
+}
+
+function scrollChatToBottom() {
   const chatEl = content.querySelector('.chat');
-  if (chatEl) chatEl.scrollTop = chatEl.scrollHeight;
+  if (!chatEl) return;
+  requestAnimationFrame(() => {
+    chatEl.scrollTop = chatEl.scrollHeight;
+  });
 }
 
 async function openSessionDir(sessionId) {
@@ -423,6 +477,8 @@ async function sendReply() {
   btn.disabled = true;
   statusEl.style.display = 'block';
   statusEl.textContent = '正在等待 Claude 回复...';
+  // 发送期间暂停自动刷新，避免与 job 轮询相互干扰
+  stopSessionRefresh();
 
   try {
     const opts = readReplyOptions();
@@ -477,6 +533,10 @@ function stopPoll() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 }
 
+function stopSessionRefresh() {
+  if (sessionRefreshTimer) { clearInterval(sessionRefreshTimer); sessionRefreshTimer = null; }
+}
+
 // ---- 会话参数（模型/权限/Effort）----
 let sessionOptionsCache = null;
 
@@ -524,6 +584,7 @@ function readReplyOptions() {
 // ---- 系统管理 ----
 async function showAdmin() {
   currentView = 'admin';
+  stopSessionRefresh();
   content.classList.remove('chat-mode');
   content.innerHTML = '<div class="fs-empty">加载中...</div>';
   try {
