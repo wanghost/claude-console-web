@@ -1,0 +1,241 @@
+:root {
+  --bg: #f5f6f8;
+  --panel: #ffffff;
+  --text: #1f2430;
+  --muted: #6b7280;
+  --border: #e5e7eb;
+  --accent: #c96442;
+  --accent-dark: #a84f33;
+  --accent-soft: #f8ece7;
+  --code-bg: #fafafa;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  font-size: 14px;
+  line-height: 1.5;
+}
+a { color: var(--accent); text-decoration: none; }
+
+/* 登录页 */
+.login-wrap {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.login-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 40px 32px;
+  width: 100%;
+  max-width: 360px;
+  text-align: center;
+}
+.login-logo {
+  width: 56px; height: 56px;
+  border-radius: 14px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  font-size: 22px;
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 16px;
+}
+.login-card h1 { font-size: 20px; font-weight: 600; }
+.login-sub { color: var(--muted); margin: 4px 0 24px; }
+.login-card form { text-align: left; }
+.login-card label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 6px; }
+.login-card input {
+  width: 100%; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 8px;
+  font-size: 14px; outline: none;
+}
+.login-card input:focus { border-color: var(--accent); }
+.login-card button {
+  width: 100%; margin-top: 20px; padding: 11px;
+  background: var(--accent); color: #fff; border: none;
+  border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer;
+}
+.login-card button:active { background: var(--accent-dark); }
+.login-err { color: #d64545; font-size: 13px; margin-top: 12px; min-height: 18px; }
+
+/* 主布局 */
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+.topbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.topbar .brand { font-weight: 700; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+.topbar .brand .dot {
+  width: 22px; height: 22px; border-radius: 6px;
+  background: var(--accent); color: #fff; display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700;
+}
+.tabs { display: flex; gap: 4px; flex: 1; }
+.tab {
+  padding: 7px 14px; border-radius: 8px; cursor: pointer;
+  color: var(--muted); font-size: 14px; white-space: nowrap;
+}
+.tab.active { background: var(--accent-soft); color: var(--accent-dark); font-weight: 600; }
+.logout-btn {
+  background: none; border: 1px solid var(--border); color: var(--muted);
+  padding: 6px 12px; border-radius: 8px; cursor: pointer; font-size: 13px;
+}
+.content { flex: 1; overflow: auto; padding: 16px; }
+.content.chat-mode { overflow: hidden; padding: 12px 16px; display: flex; flex-direction: column; }
+
+/* 文件浏览器 */
+.fs-breadcrumb {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-bottom: 12px; font-size: 13px; color: var(--muted);
+}
+.fs-breadcrumb .crumb { cursor: pointer; color: var(--accent); }
+.fs-breadcrumb .sep { color: var(--muted); }
+.fs-list { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.fs-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 14px; border-bottom: 1px solid var(--border); cursor: pointer;
+}
+.fs-item:last-child { border-bottom: none; }
+.fs-item:active { background: var(--accent-soft); }
+.fs-item .icon { width: 20px; text-align: center; color: var(--muted); }
+.fs-item.dir .icon { color: var(--accent); }
+.fs-item .name { flex: 1; word-break: break-all; }
+.fs-item .meta { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.fs-empty { padding: 32px; text-align: center; color: var(--muted); }
+
+/* 文件查看/编辑 */
+.file-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.file-head .path { flex: 1; font-family: monospace; font-size: 13px; color: var(--muted); word-break: break-all; }
+.file-head button {
+  background: var(--accent); color: #fff; border: none; padding: 7px 14px;
+  border-radius: 8px; cursor: pointer; font-size: 13px;
+}
+.file-head button.secondary { background: var(--panel); color: var(--text); border: 1px solid var(--border); }
+textarea.editor {
+  width: 100%; min-height: 50vh;
+  font-family: "SF Mono", Consolas, monospace; font-size: 13px; line-height: 1.5;
+  border: 1px solid var(--border); border-radius: 12px; padding: 14px;
+  background: var(--code-bg); outline: none; resize: vertical;
+}
+pre.viewer {
+  background: var(--code-bg); border: 1px solid var(--border); border-radius: 12px;
+  padding: 14px; overflow: auto; font-family: "SF Mono", Consolas, monospace;
+  font-size: 13px; white-space: pre-wrap; word-break: break-all;
+}
+.binary-note { padding: 32px; text-align: center; color: var(--muted); }
+.truncate-note { color: var(--accent-dark); font-size: 12px; margin-top: 8px; }
+
+/* 会话列表 */
+.sess-toolbar { margin-bottom: 12px; }
+.new-sess-btn {
+  background: var(--accent); color: #fff; border: none;
+  padding: 8px 16px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.new-sess-btn:active { background: var(--accent-dark); }
+.sess-list { display: flex; flex-direction: column; gap: 10px; }
+.sess-item {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 13px 16px; cursor: pointer;
+}
+.sess-item:active { background: var(--accent-soft); }
+.sess-item .title { font-weight: 500; margin-bottom: 4px; word-break: break-all; }
+.sess-item .meta { font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 8px; }
+.sess-item .badge { color: var(--accent-dark); }
+
+/* 会话详情 */
+.chat-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.chat-wrap .file-head { flex-shrink: 0; }
+.chat { display: flex; flex-direction: column; gap: 12px; flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 4px 2px; }
+.msg { max-width: 92%; padding: 10px 14px; border-radius: 12px; white-space: pre-wrap; word-break: break-word; flex-shrink: 0; }
+.msg.user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+.msg.assistant { align-self: flex-start; background: var(--panel); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+.chat-input-area { flex-shrink: 0; padding-top: 8px; background: var(--bg); }
+.reply-bar {
+  display: flex; gap: 8px; margin-top: 4px; background: var(--bg); padding: 8px 0;
+}.reply-bar textarea {
+  flex: 1; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+  font-size: 14px; resize: none; outline: none; min-height: 42px; max-height: 120px;
+}
+.reply-bar button {
+  background: var(--accent); color: #fff; border: none; border-radius: 10px;
+  padding: 0 18px; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.reply-bar button:disabled { opacity: .5; }
+.job-status { margin-top: 8px; padding: 10px 14px; border-radius: 10px; background: var(--accent-soft); color: var(--accent-dark); font-size: 13px; }
+
+/* 会话参数选项栏（固定在输入框上方） */
+.reply-options { display: flex; gap: 10px; margin-bottom: 4px; flex-wrap: wrap; border-top: 1px solid var(--border); padding-top: 10px; }
+.reply-options .opt-field { flex: 1; min-width: 100px; }
+.opt-field { display: flex; flex-direction: column; gap: 3px; }
+.opt-field label { font-size: 12px; color: var(--muted); }
+.opt-field select {
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px;
+  font-size: 13px; outline: none; background: var(--panel); color: var(--text);
+}
+.new-sess-options { display: flex; gap: 10px; flex-wrap: wrap; }
+.new-sess-options .opt-field { flex: 1; min-width: 100px; }
+.new-sess-options select {
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+  font-size: 14px; outline: none; width: 100%;
+}
+
+.back-btn {
+  background: none; border: none; color: var(--accent); font-size: 14px; cursor: pointer;
+  padding: 4px 0; margin-bottom: 10px; display: flex; align-items: center; gap: 4px;
+}
+
+/* 新建会话表单 */
+.new-sess-form {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 16px; display: flex; flex-direction: column; gap: 8px;
+}
+.new-sess-form label { font-size: 13px; color: var(--muted); }
+.new-sess-form select, .new-sess-form textarea {
+  border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+  font-size: 14px; outline: none; width: 100%;
+}
+.new-sess-form textarea { min-height: 80px; resize: vertical; font-family: inherit; }
+.new-sess-form button {
+  background: var(--accent); color: #fff; border: none; border-radius: 8px;
+  padding: 11px; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.new-sess-form button:disabled { opacity: .5; }
+
+/* 系统管理 */
+.admin-section { display: flex; flex-direction: column; gap: 16px; max-width: 560px; }
+.admin-section h2 { font-size: 16px; font-weight: 600; margin: 0; }
+.admin-card {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  padding: 16px; display: flex; flex-direction: column; gap: 8px;
+}
+.admin-card-title { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+.admin-row { display: flex; justify-content: space-between; font-size: 14px; padding: 4px 0; }
+.admin-card label { font-size: 13px; color: var(--muted); }
+.admin-card input {
+  border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+  font-size: 14px; outline: none; width: 100%;
+}
+.admin-card input:focus { border-color: var(--accent); }
+.admin-card button {
+  background: var(--accent); color: #fff; border: none; border-radius: 8px;
+  padding: 10px; font-size: 14px; font-weight: 600; cursor: pointer; margin-top: 4px;
+}
+.admin-card button:disabled { opacity: .5; }
+.admin-msg { font-size: 13px; min-height: 18px; }
+
+@media (min-width: 768px) {
+  .content { max-width: 960px; margin: 0 auto; width: 100%; }
+}
