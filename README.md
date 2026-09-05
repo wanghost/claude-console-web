@@ -1,6 +1,8 @@
 # Claude Console Web
 
-轻量级 Claude Code Wen远程操控台。本地浏览文件、查看/回复正在运行的 Claude 会话，手机通过浏览器远程访问（配合固定公网 IP，无需内网穿透）。
+轻量级 Claude Code 远程操控台。本地浏览文件、查看/回复正在运行的 Claude 会话，手机通过浏览器远程访问（配合固定公网 IP，无需内网穿透）。
+
+> 跨平台：支持 Windows、Linux、macOS（Python 3.9+）。会话路径解析已兼容 Windows 盘符与 Linux 绝对路径两种转义格式。
 
 ## 功能
 
@@ -20,23 +22,37 @@
 
 ### 方式一：一键启动脚本（推荐）
 
-双击 `start.bat` 即可，脚本会自动：
+- **Windows**：双击 `start.bat`
+- **Linux / macOS**：`bash start.sh`
+
+脚本会自动：
 
 1. 检查 Python 环境
 2. 首次运行时自动创建虚拟环境并安装依赖
 3. 获取本机局域网 IP
 4. 以 `0.0.0.0` 启动服务（支持局域网/公网访问）
-5. 自动打开浏览器
+5. 自动打开浏览器（Windows 版）
 
 启动后命令行会显示本机访问地址和局域网访问地址（手机同一 WiFi 下用局域网地址）。
 
 ### 方式二：手动启动
+
+Windows：
 
 ```bash
 cd claude-console-web
 python -m venv venv
 venv\Scripts\python.exe -m pip install -r requirements.txt
 venv\Scripts\python.exe -m uvicorn main:app --host 0.0.0.0 --port 8080
+```
+
+Linux / macOS：
+
+```bash
+cd claude-console-web
+python3 -m venv venv
+venv/bin/pip install -r requirements.txt
+venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8080
 ```
 
 > 依赖：fastapi、uvicorn、itsdangerous、python-multipart
@@ -47,11 +63,22 @@ venv\Scripts\python.exe -m uvicorn main:app --host 0.0.0.0 --port 8080
 
 > 也可以在首次启动前用环境变量指定初始值（之后以数据库为准）：
 
+Windows：
+
 ```bash
 set CC_USERNAME=你的账号
 set CC_PASSWORD=你的初始密码
 set CC_SECRET=一段随机字符串
 set CC_ROOT=D:\Workspace
+```
+
+Linux / macOS：
+
+```bash
+export CC_USERNAME=你的账号
+export CC_PASSWORD=你的初始密码
+export CC_SECRET=一段随机字符串
+export CC_ROOT=/home/you/workspace
 ```
 
 ### 访问
@@ -69,7 +96,7 @@ set CC_ROOT=D:\Workspace
 | `CC_USERNAME` | `admin` | 登录账号 |
 | `CC_PASSWORD` | `admin123` | 登录密码（务必改） |
 | `CC_SECRET` | - | 会话签名密钥（务必改） |
-| `CC_ROOT` | `D:\Workspace` | 文件浏览根目录，可改为任意目录 |
+| `CC_ROOT` | `D:\Workspace`（Windows）/ `~/workspace`（Linux） | 文件浏览根目录，可改为任意目录 |
 | `CC_CLAUDE_CLI` | `claude` | claude 命令路径 |
 | `CC_REPLY_TIMEOUT` | `600` | 会话回复超时（秒） |
 

@@ -5,6 +5,18 @@ from typing import Optional
 import config
 
 
+def _is_within(path: Path, root: Path) -> bool:
+    """判断 path 是否在 root 内（含 root 自身），跨平台安全。
+
+    用 relative_to 而非字符串 startswith，避免前缀误判（如 /data vs /database）。
+    """
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
 def _resolve(rel_path: Optional[str]) -> Path:
     """把相对路径解析为绝对路径，并确保在根目录内。"""
     root = config.get_root_dir().resolve()
@@ -14,7 +26,7 @@ def _resolve(rel_path: Optional[str]) -> Path:
     rel_path = rel_path.lstrip("/\\")
     candidate = (root / rel_path).resolve()
     # 防路径穿越：解析后必须仍在 root 内
-    if not str(candidate).startswith(str(root)):
+    if not _is_within(candidate, root):
         raise PermissionError("路径越界")
     return candidate
 
@@ -26,7 +38,7 @@ def abs_to_rel(abs_path: str) -> Optional[str]:
         abs_p = Path(abs_path).resolve()
     except (OSError, ValueError):
         return None
-    if not str(abs_p).startswith(str(root)):
+    if not _is_within(abs_p, root):
         return None
     rel = abs_p.relative_to(root)
     return str(rel).replace("\\", "/")

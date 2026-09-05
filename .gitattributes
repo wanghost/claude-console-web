@@ -1,0 +1,4 @@
+# 跨平台行尾规范：shell 脚本必须用 LF，否则 Linux 上会报 bad interpreter
+*.sh text eol=lf
+*.bat text eol=crlf
+*.py text eol=lf

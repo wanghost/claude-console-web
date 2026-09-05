@@ -178,7 +178,8 @@ def session_dirs():
         rel = files.abs_to_rel(cwd)
         if rel and rel not in seen:
             seen.add(rel)
-            result.append({"path": cwd, "rel": rel, "name": cwd.split("\\")[-1] or cwd})
+            name = Path(cwd).name or cwd
+            result.append({"path": cwd, "rel": rel, "name": name})
     return {"dirs": result}
 
 

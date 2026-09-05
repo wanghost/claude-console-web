@@ -19,11 +19,18 @@ DB_PATH = Path(__file__).parent / "console.db"
 _lock = threading.Lock()
 _conn = None
 
+# 跨平台默认根目录：Windows 用 D:\Workspace，其他系统用 ~/workspace。
+def _default_root_dir() -> str:
+    if os.name == "nt":
+        return r"D:\Workspace"
+    return str(Path.home() / "workspace")
+
+
 # 默认配置（首次运行时写入 DB）。环境变量可覆盖这些默认值。
 DEFAULTS = {
     "username": os.environ.get("CC_USERNAME", "admin"),
     # 默认密码的哈希在 init 时计算，这里先用占位，实际通过 set_password 写入
-    "root_dir": os.environ.get("CC_ROOT", r"D:\Workspace"),
+    "root_dir": os.environ.get("CC_ROOT", _default_root_dir()),
     "secret_key": os.environ.get("CC_SECRET", "please-change-this-secret-key"),
 }
 
@@ -143,7 +150,7 @@ def check_password(password: str) -> bool:
 
 
 def get_root_dir() -> str:
-    return get_setting("root_dir", r"D:\Workspace")
+    return get_setting("root_dir", _default_root_dir())
 
 
 def set_root_dir(value: str) -> None:

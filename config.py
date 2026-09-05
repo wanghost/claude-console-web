@@ -14,7 +14,7 @@ PASSWORD = os.environ.get("CC_PASSWORD", "change-me-please")
 # 会话签名密钥：用于签发登录 cookie。不设则每次重启登录态失效。
 SECRET_KEY = os.environ.get("CC_SECRET", "please-change-this-secret-key")
 
-# 文件浏览的根目录。存储在 SQLite 中（默认 D:\Workspace），可在「系统管理」里在线修改。
+# 文件浏览的根目录。存储在 SQLite 中（默认 D:\Workspace / Linux ~/workspace），可在「系统管理」里在线修改。
 # 通过 get_root_dir() 动态读取；环境变量 CC_ROOT 仅作为首次初始化的默认值。
 def get_root_dir() -> Path:
     import db

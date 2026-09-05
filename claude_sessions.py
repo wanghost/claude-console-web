@@ -46,19 +46,28 @@ def _extract_text(content) -> str:
 
 
 def _decode_project_dir(dirname: str) -> str:
-    """把 Claude 的目录转义名还原为可读路径。规则：'d--C--Users-x' -> 'C:\\Users\\x'，'-' 转回 '\\'。
+    """把 Claude 的目录转义名还原为可读路径，兼容 Windows 与 Linux。
 
-    实际格式：'d--Workspace-03zsxn' 表示 'd:\\Workspace\\03zsxn'（小写盘符）。
-    这里尽力还原，失败则原样返回。
+    Claude Code 的 project 目录转义规则（不同平台略有差异）：
+      - Windows：'d--Workspace-03zsxn' -> 'D:\\Workspace\\03zsxn'
+                盘符小写 + '--'，路径分隔符 '\\' 与 '-' 都转成 '-'。
+      - Linux：'/home/user/project' -> '-home-user-project'
+              根 '/' 转成前导 '-'，后续 '/' 转成 '-'。
+
+    这里做「尽力还原」：先按 Windows 盘符格式尝试，否则按 Linux 绝对路径格式尝试，
+    都失败则原样返回。
     """
-    if dirname.startswith("d--"):
+    # 1) Windows 盘符格式：'d--...'（单字母盘符 + '--'）
+    if len(dirname) >= 3 and dirname[1:3] == "--" and dirname[0].isalpha():
         rest = dirname[3:]
-        # 单字符盘符 + 分隔
-        drive = rest[0]
-        path_part = rest[1:]
-        # '-' 分隔，但盘符后的第一个 '-' 是分隔符
-        segs = path_part.split("-")
-        return f"{drive}:\\" + "\\".join(segs)
+        segs = rest.split("-")
+        return f"{dirname[0].upper()}:\\" + "\\".join(segs)
+
+    # 2) Linux 绝对路径格式：以 '-' 开头表示根目录 '/'
+    if dirname.startswith("-"):
+        segs = dirname[1:].split("-")
+        return "/" + "/".join(segs)
+
     return dirname
 
 
