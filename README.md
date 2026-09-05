@@ -1,6 +1,6 @@
 # Claude Console Web
 
-轻量级 Claude Code 远程操控台。本地浏览文件、查看/回复正在运行的 Claude 会话，手机通过浏览器远程访问（配合固定公网 IP，无需内网穿透）。
+轻量级 Claude Code 远程操控台。本地浏览文件、查看/回复正在运行的 Claude 会话，手机通过浏览器远程访问（配合固定公网 IP或内网穿透）。
 
 > 跨平台：支持 Windows、Linux、macOS（Python 3.9+）。会话路径解析已兼容 Windows 盘符与 Linux 绝对路径两种转义格式。
 
