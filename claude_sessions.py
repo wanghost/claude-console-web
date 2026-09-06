@@ -124,11 +124,13 @@ def _summarize_session(path: Path, session_id: str) -> Optional[dict]:
                 if ts:
                     last_ts = _parse_ts(ts) or last_ts
                 if rtype == "user":
-                    user_msgs += 1
                     msg = rec.get("message", {})
                     text = _extract_text(msg.get("content"))
-                    if text and not title or title == session_id[:8]:
-                        title = text[:60]
+                    # 只统计「含真实文本」的 user 消息，排除纯 tool_result 回填记录
+                    if text:
+                        user_msgs += 1
+                        if not title or title == session_id[:8]:
+                            title = text[:60]
                     cwd = cwd or rec.get("cwd")
                 elif rtype == "assistant":
                     assistant_msgs += 1

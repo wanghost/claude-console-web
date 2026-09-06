@@ -16,6 +16,8 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
       body: JSON.stringify({ username, password }),
     });
     if (res.ok) {
+      // 登录后默认进入会话视图（清除上次停留视图的记忆，避免落到预览等视图）
+      try { localStorage.removeItem('cc_last_view'); localStorage.removeItem('cc_last_path'); } catch (e) {}
       window.location.href = '/';
     } else {
       const data = await res.json().catch(() => ({}));

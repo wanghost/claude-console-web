@@ -104,21 +104,32 @@ async function api(path, options = {}) {
 }
 
 // ---- 视图切换 ----
+function setActiveTab(view) {
+  document.querySelectorAll('.tab').forEach((t) => {
+    t.classList.toggle('active', t.dataset.view === view);
+  });
+}
+
+function switchView(view) {
+  currentView = view;
+  stopPoll();
+  stopSessionRefresh();
+  try { localStorage.setItem('cc_last_view', view); } catch (e) {}
+  setActiveTab(view);
+  if (view === 'files') {
+    showFiles(currentPath || '');
+  } else if (view === 'sessions') {
+    showSessions();
+  } else if (view === 'preview') {
+    showPreview();
+  } else if (view === 'admin') {
+    showAdmin();
+  }
+}
+
 document.querySelectorAll('.tab').forEach((tab) => {
   tab.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
-    tab.classList.add('active');
-    const view = tab.dataset.view;
-    currentView = view;
-    stopPoll();
-    stopSessionRefresh();
-    if (view === 'files') {
-      showFiles(currentPath || '');
-    } else if (view === 'sessions') {
-      showSessions();
-    } else if (view === 'admin') {
-      showAdmin();
-    }
+    switchView(tab.dataset.view);
   });
 });
 
@@ -127,11 +138,111 @@ document.getElementById('logout-btn').addEventListener('click', async () => {
   window.location.href = '/login.html';
 });
 
+// ---- 预览（内嵌浏览器打开开发中的前端系统）----
+let previewUrl = '';
+try { previewUrl = localStorage.getItem('cc_preview_url') || ''; } catch (e) {}
+
+function showPreview() {
+  currentView = 'preview';
+  stopSessionRefresh();
+  content.classList.add('chat-mode');
+  content.innerHTML = '<div class="preview-wrap">'
+    + '<div class="preview-bar">'
+    + '<input class="preview-input" id="preview-url" placeholder="http://127.0.0.1:8080" spellcheck="false">'
+    + '<button class="primary" id="preview-go">打开</button>'
+    + '<button class="secondary" id="preview-refresh">刷新</button>'
+    + '<button class="secondary" id="preview-open">新窗口</button>'
+    + '</div>'
+    + '<div class="preview-body" id="preview-body">'
+    + '<button class="fullscreen-btn" id="preview-fs" title="全屏">⛶</button>'
+    + '<div class="preview-empty" id="preview-empty">输入开发服务的地址（如 http://127.0.0.1:8080），点击「打开」内嵌预览</div>'
+    + '<iframe class="preview-frame" id="preview-frame" style="display:none" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"></iframe>'
+    + '</div>'
+    + '</div>';
+
+  const input = document.getElementById('preview-url');
+  const frame = document.getElementById('preview-frame');
+  const empty = document.getElementById('preview-empty');
+  const body = document.getElementById('preview-body');
+  const fsBtn = document.getElementById('preview-fs');
+  input.value = previewUrl;
+
+  function normalizeUrl(raw) {
+    let u = (raw || '').trim();
+    if (!u) return '';
+    if (!/^https?:\/\//i.test(u)) u = 'http://' + u;
+    return u;
+  }
+  // 将目标地址转换为走本服务 /proxy 的地址（公网下 127.0.0.1 由后端转发）
+  function toProxyUrl(raw) {
+    const url = normalizeUrl(raw);
+    if (!url) return '';
+    try {
+      const u = new URL(url);
+      const target = u.host; // host 含端口，如 127.0.0.1:8080
+      return '/proxy/' + target + u.pathname + u.search;
+    } catch (e) {
+      return '';
+    }
+  }
+  function loadPreview() {
+    const url = normalizeUrl(input.value);
+    if (!url) return;
+    previewUrl = url;
+    try { localStorage.setItem('cc_preview_url', url); } catch (e) {}
+    input.value = url;
+    empty.style.display = 'none';
+    frame.style.display = 'block';
+    frame.src = toProxyUrl(url);
+  }
+  function clearPreview() {
+    frame.style.display = 'none';
+    frame.src = 'about:blank';
+    empty.style.display = 'block';
+  }
+
+  document.getElementById('preview-go').addEventListener('click', loadPreview);
+  document.getElementById('preview-refresh').addEventListener('click', () => {
+    if (!frame.src || frame.style.display === 'none') { loadPreview(); return; }
+    frame.src = frame.src; // 重新加载当前 iframe
+  });
+  document.getElementById('preview-open').addEventListener('click', () => {
+    const proxy = toProxyUrl(input.value);
+    if (proxy) window.open(proxy, '_blank');
+  });
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') loadPreview(); });
+
+  // 系统级全屏切换（HTML5 Fullscreen API）
+  let isFullscreen = false;
+  function toggleFullscreen() {
+    if (!document.fullscreenElement) {
+      const el = body.requestFullscreen ? body : document.documentElement;
+      const p = el.requestFullscreen && el.requestFullscreen();
+      if (p && p.catch) p.catch(() => {});
+    } else {
+      if (document.exitFullscreen) document.exitFullscreen();
+    }
+  }
+  function onFsChange() {
+    isFullscreen = !!document.fullscreenElement;
+    body.classList.toggle('fullscreen', isFullscreen);
+    fsBtn.classList.toggle('active', isFullscreen);
+    fsBtn.textContent = isFullscreen ? '✕' : '⛶';
+    fsBtn.title = isFullscreen ? '退出全屏' : '全屏';
+  }
+  fsBtn.addEventListener('click', toggleFullscreen);
+  document.addEventListener('fullscreenchange', onFsChange);
+
+  // 恢复上次的预览地址
+  if (previewUrl) loadPreview();
+}
+
 // ---- 文件浏览 ----
 async function showFiles(path = '') {
   currentPath = path;
   currentView = 'files';
   stopSessionRefresh();
+  try { localStorage.setItem('cc_last_path', path || ''); } catch (e) {}
   content.classList.remove('chat-mode');
   content.innerHTML = '<div class="fs-empty">加载中...</div>';
   try {
@@ -144,7 +255,8 @@ async function showFiles(path = '') {
 
 function renderFiles(data) {
   const crumbs = buildBreadcrumb(data.path);
-  let html = '<div class="fs-breadcrumb">' + crumbs + '</div>';
+  let html = '<div class="fs-wrap">';
+  html += '<div class="fs-breadcrumb">' + crumbs + '</div>';
   html += '<div class="fs-list">';
   if (!data.entries || data.entries.length === 0) {
     html += '<div class="fs-empty">空目录</div>';
@@ -160,6 +272,8 @@ function renderFiles(data) {
     }
   }
   html += '</div>';
+  html += '</div>'; // .fs-wrap
+  content.classList.add('chat-mode');
   content.innerHTML = html;
 
   content.querySelectorAll('.fs-item').forEach((item) => {
@@ -195,9 +309,12 @@ async function openFile(path) {
   try {
     const data = await api('/api/fs/read?path=' + encodeURIComponent(path));
     if (data.encoding === 'binary') {
-      content.innerHTML = '<button class="back-btn" onclick="showFiles(currentPath)">← 返回</button>'
+      content.classList.add('chat-mode');
+      content.innerHTML = '<div class="editor-wrap">'
+        + '<button class="back-btn" onclick="showFiles(currentPath)">← 返回</button>'
         + '<div class="file-head"><span class="path">' + esc(data.path) + '</span></div>'
-        + '<div class="binary-note">二进制文件（' + fmtSize(data.size) + '），无法预览</div>';
+        + '<div class="binary-note">二进制文件（' + fmtSize(data.size) + '），无法预览</div>'
+        + '</div>';
       return;
     }
     renderEditor(data);
@@ -207,30 +324,137 @@ async function openFile(path) {
 }
 
 function renderEditor(data) {
-  let html = '<button class="back-btn" onclick="showFiles(currentPath)">← 返回</button>';
+  let html = '<div class="editor-wrap">';
+  html += '<button class="back-btn" onclick="showFiles(currentPath)">← 返回</button>';
   html += '<div class="file-head"><span class="path">' + esc(data.path) + '</span>'
+    + '<button class="secondary" id="wrap-toggle" title="切换自动换行">自动换行</button>'
     + '<button class="secondary" id="edit-toggle">编辑</button>'
     + '<button id="save-btn" style="display:none">保存</button></div>';
-  html += '<textarea class="editor" id="editor" style="display:none"></textarea>';
-  html += '<pre class="viewer" id="viewer"></pre>';
+  html += '<div class="editor-body">';
+  // 编辑器（带行号）
+  html += '<div class="editor-pane" id="editor-pane" style="display:none">'
+    + '<div class="line-nums" id="editor-linenums"></div>'
+    + '<textarea class="editor" id="editor"></textarea>'
+    + '</div>';
+  // 查看器（行号内联，每行独立，支持换行对齐）
+  html += '<div class="viewer-pane" id="viewer-pane">'
+    + '<div class="viewer" id="viewer"></div>'
+    + '</div>';
+  html += '</div>';
   if (data.truncated) {
     html += '<div class="truncate-note">文件过大，仅显示前 ' + fmtSize(data.size) + ' 中的一部分</div>';
   }
+  html += '</div>'; // .editor-wrap
+  content.classList.add('chat-mode');
   content.innerHTML = html;
 
   const viewer = document.getElementById('viewer');
+  const editorPane = document.getElementById('editor-pane');
+  const viewerPane = document.getElementById('viewer-pane');
   const editor = document.getElementById('editor');
+  const editorNums = document.getElementById('editor-linenums');
   const editToggle = document.getElementById('edit-toggle');
   const saveBtn = document.getElementById('save-btn');
-  viewer.textContent = data.content || '';
+  const wrapToggle = document.getElementById('wrap-toggle');
 
+  // 查看器：按行渲染，行号内联（每行独立，软换行时行号自动对齐行首）
+  function renderViewerContent(text) {
+    const lines = (text || '').split('\n');
+    let html = '';
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      html += '<div class="code-line">'
+        + '<span class="ln">' + (i + 1) + '</span>'
+        + '<span class="lc">' + (line === '' ? ' ' : esc(line)) + '</span>'
+        + '</div>';
+    }
+    viewer.innerHTML = html;
+  }
+  renderViewerContent(data.content);
+
+  // 自动换行切换
+  let wrapEnabled = false;
+  function applyWrap() {
+    viewer.classList.toggle('wrap', wrapEnabled);
+    editor.classList.toggle('wrap', wrapEnabled);
+    wrapToggle.textContent = wrapEnabled ? '不换行' : '自动换行';
+    wrapToggle.classList.toggle('active', wrapEnabled);
+    renderEditorLineNums();
+  }
+  wrapToggle.addEventListener('click', () => {
+    wrapEnabled = !wrapEnabled;
+    applyWrap();
+  });
+
+  // 隐藏镜像：与 textarea 同宽同字体，用于测量软换行后的视觉行数
+  const mirror = document.createElement('div');
+  mirror.style.cssText = 'position:absolute;left:-9999px;top:0;visibility:hidden;'
+    + 'pointer-events:none;white-space:pre-wrap;word-break:break-word;'
+    + 'overflow-y:scroll;box-sizing:border-box;padding:14px;'
+    + 'font-family:"SF Mono",Consolas,monospace;font-size:13px;line-height:1.5;';
+  document.body.appendChild(mirror);
+
+  function measureLineHeight() {
+    mirror.textContent = 'X';
+    return mirror.getBoundingClientRect().height;
+  }
+  // 测量每个逻辑行软换行后占用的视觉行数
+  function measureWrapLineCounts(text) {
+    mirror.style.width = editor.clientWidth + 'px';
+    const lineHeight = measureLineHeight();
+    const lines = (text || '').split('\n');
+    const counts = [];
+    for (const line of lines) {
+      mirror.textContent = line === '' ? ' ' : line;
+      const h = mirror.getBoundingClientRect().height;
+      counts.push(Math.max(1, Math.round(h / lineHeight)));
+    }
+    return counts;
+  }
+
+  // 生成编辑器行号（换行模式下按视觉行渲染，否则按逻辑行）
+  function renderEditorLineNums() {
+    if (wrapEnabled) {
+      const counts = measureWrapLineCounts(editor.value);
+      let html = '';
+      let n = 1;
+      for (const c of counts) {
+        html += '<span>' + n + '</span>';
+        for (let i = 1; i < c; i++) html += '<span></span>';
+        n++;
+      }
+      editorNums.innerHTML = html;
+    } else {
+      const lines = editor.value ? editor.value.split('\n').length : 1;
+      renderLineNums(editorNums, lines);
+    }
+  }
+  renderEditorLineNums();
+
+  // 宽度变化时（窗口缩放等）重算视觉行号
+  if (window.ResizeObserver) {
+    new ResizeObserver(() => { if (wrapEnabled) renderEditorLineNums(); }).observe(editor);
+  }
+
+  // 编辑模式切换
   editToggle.addEventListener('click', () => {
-    const isEditing = editor.style.display !== 'none';
-    editor.style.display = isEditing ? 'none' : 'block';
-    viewer.style.display = isEditing ? 'block' : 'none';
+    const isEditing = editorPane.style.display !== 'none';
+    editorPane.style.display = isEditing ? 'none' : 'flex';
+    viewerPane.style.display = isEditing ? 'flex' : 'none';
     editToggle.textContent = isEditing ? '编辑' : '取消编辑';
     saveBtn.style.display = isEditing ? 'none' : 'inline-block';
-    if (!isEditing) editor.value = data.content || '';
+    if (!isEditing) {
+      editor.value = data.content || '';
+      renderEditorLineNums();
+      editor.scrollTop = 0;
+    }
+  });
+
+  // 编辑器输入时同步行号
+  editor.addEventListener('input', renderEditorLineNums);
+  // 编辑器滚动时同步行号滚动
+  editor.addEventListener('scroll', () => {
+    editorNums.scrollTop = editor.scrollTop;
   });
 
   saveBtn.addEventListener('click', async () => {
@@ -242,9 +466,9 @@ function renderEditor(data) {
         body: JSON.stringify({ path: data.path, content: editor.value }),
       });
       data.content = editor.value;
-      viewer.textContent = editor.value;
-      editor.style.display = 'none';
-      viewer.style.display = 'block';
+      renderViewerContent(editor.value);
+      editorPane.style.display = 'none';
+      viewerPane.style.display = 'flex';
       editToggle.textContent = '编辑';
       saveBtn.style.display = 'none';
       alert('已保存');
@@ -254,6 +478,15 @@ function renderEditor(data) {
       saveBtn.disabled = false;
     }
   });
+}
+
+// 生成行号 DOM
+function renderLineNums(container, count) {
+  let html = '';
+  for (let i = 1; i <= count; i++) {
+    html += '<span>' + i + '</span>';
+  }
+  container.innerHTML = html;
 }
 
 // ---- 会话列表 ----
@@ -283,7 +516,8 @@ function projectName(projectDir) {
 }
 
 function renderSessions(sessions) {
-  let html = '<div class="sess-toolbar"><button class="new-sess-btn" id="new-sess-btn">＋ 新建会话</button></div>';
+  let html = '<div class="sess-wrap">';
+  html += '<div class="sess-toolbar"><button class="new-sess-btn" id="new-sess-btn">＋ 新建会话</button></div>';
   if (!sessions.length) {
     html += '<div class="fs-empty">暂无会话</div>';
   } else {
@@ -327,21 +561,30 @@ function renderSessions(sessions) {
         + '<span class="project-group-count">' + group.length + ' 个会话</span></div>';
       for (const s of group) {
         html += '<div class="sess-item" data-id="' + esc(s.session_id) + '">'
+          + '<div class="sess-item-main">'
           + '<div class="title">' + esc(s.title) + '</div>'
           + '<div class="meta">'
           + '<span class="badge">' + esc(s.session_id.slice(0, 8)) + '</span>'
           + '<button class="sess-msg-count" data-id="' + esc(s.session_id) + '" title="查看我的发言列表">发言 ' + s.user_msgs + ' 条</button>'
           + '<span>' + esc(fmtTime(s.last_ts)) + '</span>'
-          + '</div></div>';
+          + '</div></div>'
+          + '<button class="sess-enter-btn" data-id="' + esc(s.session_id) + '" title="进入会话">进入</button>'
+          + '</div>';
       }
       html += '</div>';
     }
     html += '</div>';
   }
+  html += '</div>'; // .sess-wrap
+  content.classList.add('chat-mode');
   content.innerHTML = html;
 
-  content.querySelectorAll('.sess-item').forEach((item) => {
-    item.addEventListener('click', () => openSession(item.dataset.id));
+  // 只有点击「进入」按钮才进入会话；点击「发言 N 条」徽标进入发言列表
+  content.querySelectorAll('.sess-enter-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openSession(btn.dataset.id);
+    });
   });
   content.querySelectorAll('.sess-msg-count').forEach((btn) => {
     btn.addEventListener('click', (e) => {
@@ -815,6 +1058,7 @@ async function showHistory(sessionId) {
 function renderHistory() {
   const msgs = historyData ? historyData.messages : [];
   const sid = historyData ? historyData.sessionId : null;
+  content.classList.add('chat-mode');
   let html = '<div class="history-wrap">';
   html += '<div class="chat-topbar">'
     + '<button class="back-btn" id="history-back-btn">← 返回</button>'
@@ -1214,6 +1458,14 @@ async function init() {
   } catch (e) {
     // 忽略，使用默认 10 秒
   }
-  showSessions();
+  // 恢复上次停留的视图（刷新后不跳回会话列表）
+  let lastView = 'sessions';
+  try { lastView = localStorage.getItem('cc_last_view') || 'sessions'; } catch (e) {}
+  if (!['files', 'sessions', 'preview', 'admin'].includes(lastView)) lastView = 'sessions';
+  if (lastView === 'files') {
+    try { currentPath = localStorage.getItem('cc_last_path') || ''; } catch (e) {}
+  }
+  setActiveTab(lastView);
+  switchView(lastView);
 }
 init();

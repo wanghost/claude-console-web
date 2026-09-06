@@ -1,6 +1,10 @@
 """Claude Console 主入口：FastAPI 服务，提供文件浏览 + 会话控制 + 鉴权。"""
 import os
+import re
+import urllib.request
+import urllib.error
 from pathlib import Path
+from urllib.parse import urlparse, urljoin, quote
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
@@ -181,6 +185,8 @@ class WriteBody(BaseModel):
 def fs_write(body: WriteBody):
     try:
         return files.write_file(body.path, body.content)
+    except files.SyntaxError_ as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
     except PermissionError:
         return JSONResponse({"error": "路径越界"}, status_code=403)
     except (FileNotFoundError, NotADirectoryError, IsADirectoryError) as e:
@@ -320,6 +326,79 @@ def job_status(job_id: str):
     if not job:
         return JSONResponse({"error": "任务不存在"}, status_code=404)
     return job
+
+
+# ---- 预览反向代理 ----
+# 公网访问时，浏览器里的 127.0.0.1 指向远端设备而非开发机，
+# 故将预览 iframe 指向本服务的 /proxy/{target}，由后端转发到开发机上的内网服务。
+# 白名单仅允许 localhost / 127.0.0.1，防止 SSRF。
+_ALLOWED_PROXY_HOSTS = ("127.0.0.1", "localhost")
+# 转发时需剥离的响应头（这些头会禁止 iframe 内嵌或与实际内容不符）
+_PROXY_STRIP_HEADERS = {
+    "content-length", "transfer-encoding", "content-encoding",
+    "x-frame-options", "content-security-policy", "connection",
+}
+
+_ABS_PATH_RE = re.compile(r"""(src|href)=(["'])/(?!["'/])""")
+
+
+def _rewrite_html(body: bytes, target: str) -> bytes:
+    """改写 HTML 里的资源路径，使其指向 /proxy/{target}/ 而非目标服务根路径。"""
+    text = body.decode("utf-8", "replace")
+    base_path = "/proxy/" + target + "/"
+    # 先改写以 / 开头的绝对路径（src=/href=/），再注入 <base> 解决相对路径。
+    # 顺序很重要：<base> 的 href 不能被后续正则二次改写。
+    text = _ABS_PATH_RE.sub(lambda m: m.group(1) + '=' + m.group(2) + base_path, text)
+    if "<head>" in text:
+        text = text.replace("<head>", '<head><base href="' + base_path + '">', 1)
+    else:
+        text = '<base href="' + base_path + '">' + text
+    return text.encode("utf-8")
+
+
+@app.get("/proxy/{target}/{rest:path}")
+def proxy(target: str, rest: str, request: Request):
+    # 白名单校验 host（target 形如 host:port）
+    host = target.split(":")[0] if ":" in target else target
+    if host not in _ALLOWED_PROXY_HOSTS:
+        return JSONResponse({"error": "仅允许代理本机服务（localhost/127.0.0.1）"}, status_code=400)
+
+    scheme = "http"
+    # 允许 target 显式带 scheme（如 127.0.0.1:8080 默认 http；暂不支持 https 内网）
+    if "://" in target:
+        parsed = urlparse(target)
+        scheme = parsed.scheme or "http"
+        netloc = parsed.netloc
+    else:
+        netloc = target
+    if netloc.split(":")[0] not in _ALLOWED_PROXY_HOSTS:
+        return JSONResponse({"error": "仅允许代理本机服务"}, status_code=400)
+
+    query = request.url.query
+    url = scheme + "://" + netloc + "/" + rest
+    if query:
+        url += "?" + query
+
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "ClaudeConsolePreview/1.0"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = resp.read()
+            content_type = resp.headers.get("Content-Type", "")
+            headers = {}
+            for k, v in resp.headers.items():
+                lk = k.lower()
+                if lk in _PROXY_STRIP_HEADERS:
+                    continue
+                headers[k] = v
+            # HTML 改写相对/绝对资源路径
+            if "text/html" in content_type:
+                body = _rewrite_html(body, netloc)
+                headers.pop("Content-Length", None)
+            return Response(body, status_code=resp.status, headers=headers)
+    except urllib.error.HTTPError as e:
+        return Response(e.read() if e.fp else b"", status_code=e.code)
+    except Exception as e:
+        return JSONResponse({"error": "代理失败：" + str(e)}, status_code=502)
 
 
 # ---- 静态前端 ----
