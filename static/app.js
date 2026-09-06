@@ -12,6 +12,73 @@ function esc(s) {
   }[c]));
 }
 
+// 轻量 Markdown 渲染（仅支持 Claude Code 常见语法）。
+// 严格「先转义、再替换」，防止 XSS；所有用户输入先走 esc()。
+function renderMarkdown(text) {
+  if (!text) return '';
+  let s = esc(text);
+
+  // 1) 围栏代码块 ```lang\n...\n``` —— 必须最先处理（内部不解释其他语法）
+  s = s.replace(/```([a-zA-Z0-9_+-]*)\n([\s\S]*?)```/g, (m, lang, code) => {
+    return '<pre class="md-pre"><code class="md-code-block" data-lang="' + esc(lang) + '">' + code + '</code></pre>';
+  });
+
+  // 2) 行内代码 `code`
+  s = s.replace(/`([^`\n]+?)`/g, '<code class="md-code">$1</code>');
+
+  // 3) 链接 [text](url)
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a class="md-link" href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+
+  // 4) 粗体 **text** （非贪婪）
+  s = s.replace(/\*\*([^*\n]+?)\*\*/g, '<strong>$1</strong>');
+
+  // 5) 斜体 *text* / _text_ （避免匹配已经成对的 *）
+  s = s.replace(/(^|[^*])\*([^*\n]+?)\*(?!\*)/g, '$1<em>$2</em>');
+  s = s.replace(/(^|\s)_([^_\n]+?)_(?=\s|$|[.,;:!?。，；：！？])/g, '$1<em>$2</em>');
+
+  // 6) 标题 # / ## / ### / #### —— 按行处理（# 后必须有空格）
+  s = s.replace(/^######\s+(.+)$/gm, '<h6 class="md-h6">$1</h6>');
+  s = s.replace(/^#####\s+(.+)$/gm, '<h5 class="md-h5">$1</h5>');
+  s = s.replace(/^####\s+(.+)$/gm, '<h4 class="md-h4">$1</h4>');
+  s = s.replace(/^###\s+(.+)$/gm, '<h3 class="md-h3">$1</h3>');
+  s = s.replace(/^##\s+(.+)$/gm, '<h2 class="md-h2">$1</h2>');
+  s = s.replace(/^#\s+(.+)$/gm, '<h1 class="md-h1">$1</h1>');
+
+  // 7) 无序列表 - item / * item
+  //    把连续的 <li> 收集成 <ul>
+  s = s.replace(/(^(?:[-*]\s+.+(?:\n|$))+)/gm, (block) => {
+    const items = block.trim().split(/\n/).map((line) => {
+      const m = line.match(/^[-*]\s+(.+)$/);
+      return m ? '<li>' + m[1] + '</li>' : '';
+    }).join('');
+    return '<ul class="md-ul">' + items + '</ul>';
+  });
+
+  // 8) 有序列表 1. item
+  s = s.replace(/(^(?:\d+\.\s+.+(?:\n|$))+)/gm, (block) => {
+    const items = block.trim().split(/\n/).map((line) => {
+      const m = line.match(/^\d+\.\s+(.+)$/);
+      return m ? '<li>' + m[1] + '</li>' : '';
+    }).join('');
+    return '<ol class="md-ol">' + items + '</ol>';
+  });
+
+  // 9) 引用 > text
+  s = s.replace(/^>\s+(.+)$/gm, '<blockquote class="md-quote">$1</blockquote>');
+
+  // 10) 分隔线 ---（三个或更多 -）
+  s = s.replace(/^-{3,}$/gm, '<hr class="md-hr">');
+
+  // 11) 段落与换行：双换行 → <p>，单换行 → <br>
+  s = s.split(/\n{2,}/).map((para) => {
+    if (/^\s*<(h\d|ul|ol|pre|blockquote|hr)/.test(para)) return para;
+    para = para.replace(/\n/g, '<br>');
+    return '<p class="md-p">' + para + '</p>';
+  }).join('\n');
+
+  return s;
+}
+
 function fmtSize(bytes) {
   if (bytes == null) return '';
   if (bytes < 1024) return bytes + ' B';
@@ -190,6 +257,10 @@ function renderEditor(data) {
 }
 
 // ---- 会话列表 ----
+// 当前会话列表的项目筛选（null 表示全部）
+let sessionFilterProject = null;
+let currentSessionsCache = [];
+
 async function showSessions() {
   currentView = 'sessions';
   stopSessionRefresh();
@@ -197,10 +268,18 @@ async function showSessions() {
   content.innerHTML = '<div class="fs-empty">加载中...</div>';
   try {
     const data = await api('/api/sessions');
-    renderSessions(data.sessions || []);
+    currentSessionsCache = data.sessions || [];
+    renderSessions(currentSessionsCache);
   } catch (e) {
     content.innerHTML = '<div class="fs-empty">' + esc(e.message) + '</div>';
   }
+}
+
+// 从 project_dir 提取短项目名（取路径最后一段）
+function projectName(projectDir) {
+  if (!projectDir) return '未分组';
+  const parts = projectDir.split(/[\\/]+/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : '未分组';
 }
 
 function renderSessions(sessions) {
@@ -208,22 +287,74 @@ function renderSessions(sessions) {
   if (!sessions.length) {
     html += '<div class="fs-empty">暂无会话</div>';
   } else {
-    html += '<div class="sess-list">';
+    // 收集所有项目（去重，保持出现顺序）
+    const projects = [];
+    const seen = new Set();
     for (const s of sessions) {
-      html += '<div class="sess-item" data-id="' + esc(s.session_id) + '">'
-        + '<div class="title">' + esc(s.title) + '</div>'
-        + '<div class="meta">'
-        + '<span class="badge">' + esc(s.session_id.slice(0, 8)) + '</span>'
-        + '<span>' + esc(s.project_dir || '') + '</span>'
-        + '<span>' + s.user_msgs + ' 条消息</span>'
-        + '<span>' + esc(fmtTime(s.last_ts)) + '</span>'
-        + '</div></div>';
+      const key = s.project_dir || '';
+      if (!seen.has(key)) {
+        seen.add(key);
+        projects.push(key);
+      }
+    }
+
+    // 项目筛选器
+    html += '<div class="project-filter">';
+    html += '<button class="project-filter-btn' + (sessionFilterProject === null ? ' active' : '') + '" data-project="">全部（' + sessions.length + '）</button>';
+    for (const p of projects) {
+      const name = projectName(p);
+      const count = sessions.filter((s) => (s.project_dir || '') === p).length;
+      html += '<button class="project-filter-btn' + (sessionFilterProject === p ? ' active' : '') + '" data-project="' + esc(p) + '">' + esc(name) + '（' + count + '）</button>';
+    }
+    html += '</div>';
+
+    // 按项目分组渲染
+    const filtered = sessionFilterProject === null
+      ? sessions
+      : sessions.filter((s) => (s.project_dir || '') === sessionFilterProject);
+
+    const groupOrder = sessionFilterProject === null
+      ? projects
+      : [sessionFilterProject];
+
+    html += '<div class="sess-list">';
+    for (const p of groupOrder) {
+      const group = filtered.filter((s) => (s.project_dir || '') === p);
+      if (!group.length) continue;
+      html += '<div class="project-group">';
+      html += '<div class="project-group-head"><span class="project-group-name">' + esc(projectName(p)) + '</span>'
+        + '<span class="project-group-path">' + esc(p) + '</span>'
+        + '<span class="project-group-count">' + group.length + ' 个会话</span></div>';
+      for (const s of group) {
+        html += '<div class="sess-item" data-id="' + esc(s.session_id) + '">'
+          + '<div class="title">' + esc(s.title) + '</div>'
+          + '<div class="meta">'
+          + '<span class="badge">' + esc(s.session_id.slice(0, 8)) + '</span>'
+          + '<button class="sess-msg-count" data-id="' + esc(s.session_id) + '" title="查看我的发言列表">发言 ' + s.user_msgs + ' 条</button>'
+          + '<span>' + esc(fmtTime(s.last_ts)) + '</span>'
+          + '</div></div>';
+      }
+      html += '</div>';
     }
     html += '</div>';
   }
   content.innerHTML = html;
+
   content.querySelectorAll('.sess-item').forEach((item) => {
     item.addEventListener('click', () => openSession(item.dataset.id));
+  });
+  content.querySelectorAll('.sess-msg-count').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showHistory(btn.dataset.id);
+    });
+  });
+  // 项目筛选按钮
+  content.querySelectorAll('.project-filter-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      sessionFilterProject = btn.dataset.project || null;
+      renderSessions(currentSessionsCache);
+    });
   });
   const newBtn = document.getElementById('new-sess-btn');
   if (newBtn) newBtn.addEventListener('click', showNewSessionForm);
@@ -343,9 +474,12 @@ function pollNewSessionJob(jobId, sessionId) {
 }
 
 // ---- 会话详情 ----
-async function openSession(id) {
+let pendingScrollMsgId = null; // 打开会话后需要定位到的消息 id（用于“跳到发言”）
+
+async function openSession(id, opts = {}) {
   currentSessionId = id;
   currentView = 'session';
+  pendingScrollMsgId = opts.scrollToMsgId || null;
   content.classList.remove('chat-mode');
   content.innerHTML = '<div class="fs-empty">加载中...</div>';
   try {
@@ -389,6 +523,7 @@ function updateChatMessages(data) {
   const msgs = data.messages || [];
   if (msgs.length === 0) {
     chatEl.innerHTML = '<div class="fs-empty">无消息</div>';
+    updateUserStrip();
     return;
   }
   let html = '';
@@ -396,13 +531,19 @@ function updateChatMessages(data) {
     html += renderMessage(m);
   }
   chatEl.innerHTML = html;
-  // 出现新内容时始终滚动到底部
-  scrollChatToBottom();
+  // 更新“我的发言”浮动条
+  updateUserStrip();
+  // 若用户正在底部，随新内容自动滚底；否则保持位置并显示“回到底部”按钮
+  if (isChatAtBottom()) {
+    scrollChatToBottom(false);
+  } else {
+    showScrollToBottomBtn();
+  }
 }
 
 // 渲染单条消息（user 消息附复制/编辑按钮）
 function renderMessage(m) {
-  let html = '<div class="msg ' + m.role + '">' + esc(m.text) + '</div>';
+  let html = '<div class="msg ' + m.role + ' md-body" id="msg-' + esc(m.id || '') + '">' + renderMarkdown(m.text) + '</div>';
   if (m.role === 'user') {
     html += '<div class="msg-actions">'
       + '<button class="msg-action-btn" data-action="copy" data-text="' + esc(m.text) + '">复制</button>'
@@ -426,7 +567,10 @@ function renderChat(data) {
     html += '<div class="file-head"><span class="path">工作目录：' + esc(data.cwd) + '</span>'
       + '<button class="secondary" id="open-cwd-btn">打开所在目录</button></div>';
   }
-  html += '<div class="chat">';
+  // “我的发言”浮动条（会话窗口最上方）
+  html += '<div class="user-strip" id="user-strip"></div>';
+  html += '<div class="chat-area">';
+  html += '<div class="chat" id="chat-scroll">';
   if (!data.messages || data.messages.length === 0) {
     html += '<div class="fs-empty">无消息</div>';
   } else {
@@ -434,6 +578,8 @@ function renderChat(data) {
       html += renderMessage(m);
     }
   }
+  html += '</div>';
+  html += '<button class="scroll-bottom-btn" id="scroll-bottom-btn" title="回到最新回复">↓ 回到最底部</button>';
   html += '</div>';
   html += '<div class="chat-input-area">';
   html += '<div class="reply-options" id="reply-options"></div>';
@@ -466,7 +612,7 @@ function renderChat(data) {
   }
   const historyBtn = document.getElementById('history-btn');
   if (historyBtn) {
-    historyBtn.addEventListener('click', showHistory);
+    historyBtn.addEventListener('click', () => showHistory(currentSessionId));
   }
   // 消息操作按钮（复制/编辑）事件委托
   const chatEl = content.querySelector('.chat');
@@ -482,17 +628,118 @@ function renderChat(data) {
         editMessage(text);
       }
     });
+    // 用户滚动时：判断是否处于底部，决定“回到底部”按钮显隐；并同步“我的发言”浮动条
+    chatEl.addEventListener('scroll', () => {
+      if (isChatAtBottom()) {
+        hideScrollToBottomBtn();
+      } else {
+        showScrollToBottomBtn();
+      }
+      updateUserStrip();
+    });
   }
-  // 滚动消息区到底部（等下一帧布局完成后再滚，确保移动端 scrollHeight 已更新）
-  scrollChatToBottom();
+  // “回到最底部”按钮
+  const scrollBtn = document.getElementById('scroll-bottom-btn');
+  if (scrollBtn) {
+    scrollBtn.addEventListener('click', () => scrollChatToBottom(true));
+  }
+  // 填充“我的发言”浮动条
+  updateUserStrip();
+  // 定位：若指定了目标消息（“跳到发言”）则滚到该消息，否则定位到最新回复处
+  if (pendingScrollMsgId) {
+    const targetId = pendingScrollMsgId;
+    pendingScrollMsgId = null;
+    requestAnimationFrame(() => {
+      const target = document.getElementById('msg-' + targetId);
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        // 高亮目标消息，便于识别
+        target.classList.add('msg-highlight');
+        setTimeout(() => target.classList.remove('msg-highlight'), 1800);
+      }
+    });
+  } else {
+    scrollChatToBottom(false);
+  }
 }
 
-function scrollChatToBottom() {
+// 是否处于消息区底部（容差 24px）
+function isChatAtBottom() {
+  const chatEl = content.querySelector('.chat');
+  if (!chatEl) return true;
+  return chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight < 24;
+}
+
+// 滚动到消息区底部；scrollMode=true 时平滑滚动，false 时瞬间定位
+function scrollChatToBottom(smooth) {
   const chatEl = content.querySelector('.chat');
   if (!chatEl) return;
-  requestAnimationFrame(() => {
-    chatEl.scrollTop = chatEl.scrollHeight;
-  });
+  const doScroll = () => {
+    if (smooth) {
+      chatEl.scrollTo({ top: chatEl.scrollHeight, behavior: 'smooth' });
+    } else {
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+  };
+  if (smooth) {
+    doScroll();
+  } else {
+    requestAnimationFrame(() => {
+      chatEl.scrollTop = chatEl.scrollHeight;
+    });
+  }
+}
+
+function showScrollToBottomBtn() {
+  const btn = document.getElementById('scroll-bottom-btn');
+  if (btn) btn.classList.add('show');
+}
+
+function hideScrollToBottomBtn() {
+  const btn = document.getElementById('scroll-bottom-btn');
+  if (btn) btn.classList.remove('show');
+}
+
+// ---- “我的发言”浮动条（会话窗口最上方） ----
+// 跟随滚动位置，同步显示“当前这一条”发言；点击跳转到对应消息
+function updateUserStrip() {
+  const strip = document.getElementById('user-strip');
+  if (!strip) return;
+  const chatEl = content.querySelector('.chat');
+  const msgs = content.querySelectorAll('.msg.user');
+  if (!msgs.length) {
+    strip.innerHTML = '';
+    strip.classList.remove('has-items');
+    return;
+  }
+
+  // 找出“当前这一条”：最后一条顶部已滚过参考线的 user 消息，否则取第一条
+  const line = chatEl ? chatEl.getBoundingClientRect().top + 40 : 0;
+  let current = msgs[0];
+  for (const el of msgs) {
+    if (el.getBoundingClientRect().top <= line) {
+      current = el;
+    } else {
+      break;
+    }
+  }
+
+  const text = current.textContent.trim();
+  const label = text.length > 80 ? text.slice(0, 80) + '…' : text;
+  const html = '<div class="user-strip-label">我的发言</div>'
+    + '<button class="user-strip-chip" data-target="' + esc(current.id) + '" title="' + esc(text) + '">' + esc(label) + '</button>';
+  strip.innerHTML = html;
+  strip.classList.add('has-items');
+
+  const chip = strip.querySelector('.user-strip-chip');
+  if (chip) {
+    chip.addEventListener('click', () => {
+      const target = document.getElementById(chip.dataset.target);
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+  }
 }
 
 // ---- 消息复制/编辑 ----
@@ -548,12 +795,17 @@ function flashHint(msg) {
 // ---- 对话历史（当前会话中我说过的话）----
 let historyData = null;
 
-async function showHistory() {
-  if (!currentSessionId) return;
+async function showHistory(sessionId) {
+  const sid = sessionId || currentSessionId;
+  if (!sid) return;
   try {
-    const data = await api('/api/sessions/' + currentSessionId);
+    const data = await api('/api/sessions/' + sid);
     const userMsgs = (data.messages || []).filter((m) => m.role === 'user');
-    historyData = { title: userMsgs.length ? userMsgs[0].text.slice(0, 40) : '会话', messages: userMsgs };
+    historyData = {
+      sessionId: sid,
+      title: userMsgs.length ? userMsgs[0].text.slice(0, 40) : '会话',
+      messages: userMsgs,
+    };
     renderHistory();
   } catch (e) {
     alert('加载对话历史失败：' + e.message);
@@ -562,11 +814,12 @@ async function showHistory() {
 
 function renderHistory() {
   const msgs = historyData ? historyData.messages : [];
+  const sid = historyData ? historyData.sessionId : null;
   let html = '<div class="history-wrap">';
   html += '<div class="chat-topbar">'
-    + '<button class="back-btn" id="history-back-btn">← 返回会话</button>'
+    + '<button class="back-btn" id="history-back-btn">← 返回</button>'
     + '</div>';
-  html += '<div class="history-head"><span class="history-title">对话历史（共 ' + msgs.length + ' 条）</span>'
+  html += '<div class="history-head"><span class="history-title">我的发言（共 ' + msgs.length + ' 条）</span>'
     + '<div class="history-actions">'
     + '<button class="secondary" id="history-copy-all">全部复制</button>'
     + '<button id="history-download">下载 MD</button>'
@@ -576,9 +829,15 @@ function renderHistory() {
     html += '<div class="fs-empty">本会话还没有你说过的话</div>';
   } else {
     for (const m of msgs) {
-      html += '<div class="history-item">'
+      html += '<div class="history-item" data-msg-id="' + esc(m.id || '') + '">'
+        + '<div class="history-item-main">'
         + '<div class="history-ts">' + esc(m.ts || '') + '</div>'
         + '<div class="history-text">' + esc(m.text) + '</div>'
+        + '</div>'
+        + '<div class="history-item-actions">'
+        + '<button class="history-action-btn" data-action="copy" data-text="' + esc(m.text) + '">复制</button>'
+        + '<button class="history-action-btn" data-action="jump" data-id="' + esc(m.id || '') + '">跳到发言</button>'
+        + '</div>'
         + '</div>';
     }
   }
@@ -587,13 +846,29 @@ function renderHistory() {
   content.innerHTML = html;
 
   document.getElementById('history-back-btn').addEventListener('click', () => {
-    openSession(currentSessionId);
+    // 若从会话详情进入，返回会话；否则返回会话列表
+    if (currentSessionId && currentSessionId === sid) {
+      openSession(currentSessionId);
+    } else {
+      showSessions();
+    }
   });
   document.getElementById('history-copy-all').addEventListener('click', () => {
     copyText(historyText());
   });
   document.getElementById('history-download').addEventListener('click', () => {
     downloadHistoryMd();
+  });
+  // 单条发言操作（复制/跳到发言）事件委托
+  content.querySelectorAll('.history-action-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.action === 'copy') {
+        copyText(btn.dataset.text);
+      } else if (btn.dataset.action === 'jump') {
+        // 打开会话详情并定位到对应消息
+        openSession(sid, { scrollToMsgId: btn.dataset.id });
+      }
+    });
   });
 }
 

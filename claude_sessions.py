@@ -181,6 +181,7 @@ def get_session_messages(session_id: str) -> dict:
             if not text:
                 continue
             messages.append({
+                "id": str(len(messages)),
                 "role": rtype,
                 "text": text,
                 "ts": _parse_ts(rec.get("timestamp")),

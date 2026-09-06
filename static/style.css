@@ -154,13 +154,42 @@ pre.viewer {
 .sess-item .title { font-weight: 500; margin-bottom: 4px; word-break: break-all; }
 .sess-item .meta { font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 8px; }
 .sess-item .badge { color: var(--accent-dark); }
+.sess-msg-count {
+  background: var(--accent-soft); color: var(--accent-dark);
+  border: 1px solid transparent; border-radius: 10px;
+  padding: 1px 8px; font-size: 12px; cursor: pointer;
+  white-space: nowrap;
+}
+.sess-msg-count:hover { border-color: var(--accent); }
+.sess-msg-count:active { background: var(--accent); color: #fff; }
+
+/* 项目筛选器 */
+.project-filter { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.project-filter-btn {
+  background: var(--panel); color: var(--text); border: 1px solid var(--border);
+  border-radius: 14px; padding: 5px 12px; font-size: 13px; cursor: pointer; white-space: nowrap;
+}
+.project-filter-btn:hover { border-color: var(--accent); }
+.project-filter-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+
+/* 项目分组 */
+.sess-list { display: flex; flex-direction: column; gap: 18px; }
+.project-group { display: flex; flex-direction: column; gap: 10px; }
+.project-group-head {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  padding-bottom: 6px; border-bottom: 1px solid var(--border);
+}
+.project-group-name { font-weight: 700; font-size: 15px; color: var(--accent-dark); }
+.project-group-path { font-size: 12px; color: var(--muted); font-family: monospace; word-break: break-all; flex: 1; }
+.project-group-count { font-size: 12px; color: var(--muted); white-space: nowrap; }
 
 /* 会话详情 */
-.chat-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.chat-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; position: relative; }
 .chat-wrap .file-head { flex-shrink: 0; }
+.chat-area { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .chat { display: flex; flex-direction: column; gap: 12px; flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 4px 2px; }
-.msg { max-width: 92%; padding: 10px 14px; border-radius: 12px; white-space: pre-wrap; word-break: break-word; flex-shrink: 0; }
-.msg.user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+.msg { max-width: 92%; padding: 10px 14px; border-radius: 12px; word-break: break-word; flex-shrink: 0; }
+.msg.user { align-self: flex-end; background: var(--accent-soft); color: var(--text); border: 1px solid var(--border); border-bottom-right-radius: 4px; }
 .msg.assistant { align-self: flex-start; background: var(--panel); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
 .chat-input-area { flex-shrink: 0; padding-top: 8px; background: var(--bg); }
 .reply-bar {
@@ -220,6 +249,39 @@ pre.viewer {
 }
 .msg-action-btn:active { background: var(--accent-soft); color: var(--accent-dark); }
 
+/* “我的发言”浮动条（会话窗口最上方） */
+.user-strip {
+  flex-shrink: 0; display: none; align-items: center; gap: 8px;
+  padding: 6px 10px; margin: 0 0 8px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+}
+.user-strip.has-items { display: flex; }
+.user-strip-label {
+  flex-shrink: 0; font-size: 12px; color: var(--muted); font-weight: 600;
+  padding-right: 8px; border-right: 1px solid var(--border);
+}
+.user-strip-chip {
+  flex: 1; min-width: 0;
+  background: var(--accent-soft); color: var(--accent-dark);
+  border: 1px solid transparent; border-radius: 12px;
+  padding: 4px 10px; font-size: 12px; cursor: pointer; text-align: left;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.user-strip-chip:hover { border-color: var(--accent); }
+.user-strip-chip:active { background: var(--accent); color: #fff; }
+
+/* “回到最底部”悬浮按钮（会话内容区右下角） */
+.scroll-bottom-btn {
+  position: absolute; right: 12px; bottom: 12px; z-index: 20;
+  background: var(--accent); color: #fff; border: none; border-radius: 20px;
+  padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  opacity: 0; pointer-events: none; transform: translateY(8px);
+  transition: opacity .2s, transform .2s;
+}
+.scroll-bottom-btn.show { opacity: 1; pointer-events: auto; transform: translateY(0); }
+.scroll-bottom-btn:active { background: var(--accent-dark); }
+
 /* 轻提示 */
 #flash-hint {
   position: fixed; left: 50%; bottom: 80px; transform: translateX(-50%) translateY(10px);
@@ -243,10 +305,28 @@ pre.viewer {
 .history-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; gap: 12px; padding: 4px 2px; }
 .history-item {
   background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-  padding: 12px 14px;
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;
 }
+.history-item:nth-child(even) { background: var(--accent-soft); }
+.history-item-main { flex: 1; min-width: 0; }
 .history-ts { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
 .history-text { white-space: pre-wrap; word-break: break-word; }
+.history-item-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.history-action-btn {
+  background: var(--accent-soft); color: var(--accent-dark);
+  border: 1px solid transparent; border-radius: 8px;
+  padding: 4px 12px; font-size: 12px; cursor: pointer;
+}
+.history-action-btn:hover { border-color: var(--accent); }
+.history-action-btn:active { background: var(--accent); color: #fff; }
+
+/* 消息定位高亮（跳到发言时短暂高亮） */
+.msg-highlight {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--accent-soft);
+  transition: outline .3s, box-shadow .3s;
+}
 
 /* 新建会话表单 */
 .new-sess-form {
@@ -290,3 +370,59 @@ pre.viewer {
 @media (min-width: 768px) {
   .content { max-width: 960px; margin: 0 auto; width: 100%; }
 }
+
+/* ---- Markdown 渲染样式（消息体） ---- */
+.md-body { line-height: 1.55; font-size: 14px; }
+.md-body > *:first-child { margin-top: 0; }
+.md-body > *:last-child { margin-bottom: 0; }
+.md-body p.md-p { margin: 6px 0; }
+.md-body h1.md-h1, .md-body h2.md-h2, .md-body h3.md-h3,
+.md-body h4.md-h4, .md-body h5.md-h5, .md-body h6.md-h6 {
+  margin: 12px 0 6px; font-weight: 600; line-height: 1.3;
+}
+.md-body h1.md-h1 { font-size: 1.6em; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+.md-body h2.md-h2 { font-size: 1.35em; padding-bottom: 3px; border-bottom: 1px solid var(--border); }
+.md-body h3.md-h3 { font-size: 1.15em; }
+.md-body h4.md-h4 { font-size: 1em; }
+.md-body h5.md-h5 { font-size: 0.95em; }
+.md-body h6.md-h6 { font-size: 0.9em; color: var(--muted); }
+
+.md-body strong { font-weight: 700; }
+.md-body em { font-style: italic; }
+
+.md-body .md-code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", monospace;
+  font-size: 0.92em;
+  background: rgba(0, 0, 0, 0.08);
+  padding: 1px 5px; border-radius: 4px;
+}
+.msg.user .md-body .md-code { background: rgba(201, 100, 66, 0.15); }
+
+.md-body .md-pre {
+  margin: 8px 0; padding: 10px 12px; border-radius: 8px;
+  background: rgba(0, 0, 0, 0.06);
+  overflow-x: auto; font-size: 13px; line-height: 1.45;
+  border: 1px solid var(--border);
+}
+.msg.user .md-body .md-pre { background: rgba(201, 100, 66, 0.08); border-color: var(--border); }
+.md-body .md-pre .md-code-block {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", monospace;
+  background: none; padding: 0; border-radius: 0; white-space: pre; font-size: 13px;
+}
+
+.md-body a.md-link { color: #2563eb; text-decoration: underline; text-underline-offset: 2px; }
+.md-body a.md-link:hover { text-decoration: none; }
+.msg.user .md-body a.md-link { color: var(--accent-dark); }
+
+.md-body ul.md-ul, .md-body ol.md-ol { margin: 6px 0; padding-left: 24px; }
+.md-body li { margin: 2px 0; }
+
+.md-body blockquote.md-quote {
+  margin: 6px 0; padding: 4px 10px;
+  border-left: 3px solid var(--border);
+  color: var(--muted);
+}
+.msg.user .md-body blockquote.md-quote { border-left-color: var(--border); color: var(--muted); }
+
+.md-body hr.md-hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
+.md-body { color: inherit; }
