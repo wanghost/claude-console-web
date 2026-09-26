@@ -60,6 +60,7 @@ echo.
 echo   Local:     http://127.0.0.1:%PORT%
 echo   LAN:       http://%LOCAL_IP%:%PORT%
 echo.
+echo   公网访问:  登录后「系统」-「外网穿透（Cloudflare）」- 启用穿透
 echo   Default account: admin   Default password: change-me-please
 echo   (Please change the password in System tab after first login!)
 echo.

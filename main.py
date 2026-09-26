@@ -6,7 +6,7 @@ import urllib.error
 from pathlib import Path
 from urllib.parse import urlparse, urljoin, quote
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, UploadFile, File, Form
 from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -16,10 +16,21 @@ import auth
 import files
 import claude_sessions
 import db
+import favorites
+import tunnel
 
 app = FastAPI(title="Claude Console")
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+@app.on_event("startup")
+def _startup():
+    """按配置自动启用 Cloudflare 穿透（失败不影响主服务）。"""
+    try:
+        tunnel.auto_start_if_enabled()
+    except Exception as e:
+        print("[tunnel] 自动穿透启动异常：%s" % e)
 
 
 # ---- 鉴权依赖 ----
@@ -37,6 +48,9 @@ async def auth_middleware(request: Request, call_next):
         # 已登录请求：滑动刷新最后活动时间（空闲超时）
         if not public and auth.is_authenticated(request):
             auth.refresh_session_activity(request, response)
+        # 静态资源禁用强缓存，避免改版后浏览器用旧 JS/CSS
+        if path.endswith((".js", ".css", ".html")):
+            response.headers["Cache-Control"] = "no-cache"
         return response
     # 页面请求重定向到登录页，API 请求返回 401
     if path.startswith("/api/"):
@@ -155,6 +169,52 @@ def admin_change_session_timeout(body: ChangeSessionTimeoutBody):
     return {"ok": True, "session_timeout": minutes}
 
 
+# ---- Cloudflare 穿透 ----
+@app.get("/api/tunnel/status")
+def tunnel_status():
+    return tunnel.status()
+
+
+class TunnelStartBody(BaseModel):
+    mode: str = None            # quick | named
+    hostname: str = None        # named 模式的固定域名，如 ccw.example.com
+    name: str = None            # tunnel 名称，默认 ccw-console
+    port: int = None            # 转发到本机哪个端口，默认服务端口
+    autostart: bool = None      # 下次服务启动是否自动启用
+
+
+@app.post("/api/tunnel/start")
+def tunnel_start(body: TunnelStartBody = None):
+    b = body or TunnelStartBody()
+    if b.port is not None and (b.port < 1 or b.port > 65535):
+        return JSONResponse({"error": "端口不合法"}, status_code=400)
+    res = tunnel.start(mode=b.mode, hostname=b.hostname, port=b.port,
+                       name=b.name, autostart=b.autostart)
+    if not res.get("ok"):
+        return JSONResponse(res, status_code=400)
+    return res
+
+
+@app.post("/api/tunnel/stop")
+def tunnel_stop():
+    return tunnel.stop()
+
+
+@app.post("/api/tunnel/config")
+def tunnel_config(body: TunnelStartBody):
+    """仅保存配置（不启停），用于设置自动启用等。"""
+    if body.port is not None and (body.port < 1 or body.port > 65535):
+        return JSONResponse({"error": "端口不合法"}, status_code=400)
+    return tunnel.save_settings(mode=body.mode, hostname=body.hostname, name=body.name,
+                                port=body.port, autostart=body.autostart)
+
+
+@app.post("/api/tunnel/install")
+def tunnel_install():
+    """后台安装 cloudflared（Windows 用 winget，macOS 用 brew，Linux 下载官方二进制）。"""
+    return tunnel.install_cloudflared()
+
+
 # ---- 文件浏览 ----
 @app.get("/api/fs/list")
 def fs_list(path: str = ""):
@@ -191,6 +251,102 @@ def fs_write(body: WriteBody):
         return JSONResponse({"error": "路径越界"}, status_code=403)
     except (FileNotFoundError, NotADirectoryError, IsADirectoryError) as e:
         return JSONResponse({"error": str(e)}, status_code=400)
+
+
+class PathBody(BaseModel):
+    path: str
+
+
+@app.post("/api/fs/mkdir")
+def fs_mkdir(body: PathBody):
+    try:
+        return files.mkdir_dir(body.path)
+    except PermissionError:
+        return JSONResponse({"error": "路径越界"}, status_code=403)
+    except FileExistsError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except OSError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/api/fs/create")
+def fs_create(body: PathBody):
+    try:
+        return files.create_file(body.path)
+    except PermissionError:
+        return JSONResponse({"error": "路径越界"}, status_code=403)
+    except FileExistsError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except OSError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+class RenameBody(BaseModel):
+    path: str
+    name: str
+
+
+@app.post("/api/fs/rename")
+def fs_rename(body: RenameBody):
+    try:
+        return files.rename(body.path, body.name)
+    except PermissionError:
+        return JSONResponse({"error": "路径越界"}, status_code=403)
+    except FileExistsError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except FileNotFoundError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except OSError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/api/fs/upload")
+async def fs_upload(file: UploadFile = File(...), path: str = Form("")):
+    try:
+        data = await file.read()
+        return files.upload_file(path, file.filename or "", data)
+    except PermissionError:
+        return JSONResponse({"error": "路径越界"}, status_code=403)
+    except FileExistsError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except FileNotFoundError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    except NotADirectoryError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except OSError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+# ---- 收藏 ----
+@app.get("/api/favorites")
+def favorites_list():
+    return {"favorites": favorites.list_favorites()}
+
+
+@app.get("/api/favorites/ids")
+def favorites_ids():
+    return {"ids": favorites.favorite_ids()}
+
+
+class FavoriteBody(BaseModel):
+    session_id: str
+    msg_id: str
+    text: str = ""
+    ts: str = ""
+
+
+@app.post("/api/favorites")
+def favorites_add(body: FavoriteBody):
+    return favorites.add_favorite(body.session_id, body.msg_id, body.text, body.ts)
+
+
+@app.delete("/api/favorites")
+def favorites_remove(session_id: str, msg_id: str):
+    return favorites.remove_favorite(session_id, msg_id)
 
 
 # ---- 会话控制 ----

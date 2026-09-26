@@ -16,6 +16,8 @@
 | 会话目录联动 | 会话详情页一键「打开所在目录」，直接跳到该会话的项目目录浏览文件 |
 | 系统管理 | 在线修改登录密码（改后强制其他设备下线）、设置默认工作目录（存 SQLite） |
 | 鉴权 | 账号密码登录，登录态存 cookie |
+| 外网穿透 | 内置 Cloudflare Tunnel，系统页一键启用即得 https 域名，无需公网 IP |
+| 扫码访问 | 穿透启用后可一键生成二维码（离线生成，不依赖外网），手机扫码直达 |
 | 移动端 | 响应式界面，手机浏览器可直接用 |
 
 ## 快速开始（一键启动）
@@ -85,7 +87,62 @@ export CC_ROOT=/home/you/workspace
 
 - 本机：`http://localhost:8080`
 - 手机：`http://<电脑的局域网IP>:8080`（同一 WiFi）
-- 公网：`http://<电脑的公网IP>:8080`（需在路由器/防火墙放行 8080 端口）
+- 公网：**用下面的 Cloudflare 穿透**，无需公网 IP、无需路由器放行端口
+
+## 外网访问（Cloudflare Tunnel）
+
+在「系统」页最上方的「外网穿透（Cloudflare）」卡片里点一下「启用穿透」，即可拿到一个 https 公网域名。
+
+### 方式一：随机域名（推荐先试这个）
+
+零配置、零成本。启用后 Cloudflare 分配一个 `https://xxxx.trycloudflare.com` 域名，手机、外网任意设备直接访问。
+
+> 域名每次启用都会变；停止后失效。适合临时远程、手机连回去看一眼。
+
+启用后地址右侧有「二维码」按钮，点开即可生成二维码（本地生成，不依赖任何外部服务），手机扫码直接打开；还能下载成 PNG 存着。
+
+### 方式二：固定域名
+
+需要你有一个**托管在 Cloudflare 上的域名**（NS 指向 Cloudflare，免费套餐即可）：
+
+1. 本机终端执行一次授权（只需一次，会打开浏览器让你登录 Cloudflare 并选域名）：
+
+   ```bash
+   cloudflared tunnel login
+   ```
+
+   Windows 授权文件在 `C:\Users\<你>\.cloudflared\cert.pem`，Linux/macOS 在 `~/.cloudflared/cert.pem`。
+
+2. 系统页选「固定域名」，填入要用的域名（如 `ccw.example.com`），点「启用穿透」。
+   程序会自动完成 `tunnel create`、DNS 路由（CNAME）与启动，之后地址固定为 `https://ccw.example.com`。
+
+### 自动启用
+
+勾选「服务启动时自动启用穿透」后，下次启动服务会自动拉起穿透，做到开机即用。
+
+### 命令行启用（不开网页也能用）
+
+```bash
+# Windows（PowerShell）
+.\enable-tunnel.ps1                                  # 随机域名
+.\enable-tunnel.ps1 -Mode named -Hostname ccw.example.com
+.\enable-tunnel.ps1 -Stop                            # 停止
+
+# Linux / macOS
+./enable-tunnel.sh                                   # 随机域名
+./enable-tunnel.sh named ccw.example.com
+./enable-tunnel.sh --stop                            # 停止
+```
+
+### 安装 cloudflared
+
+系统页会检测，未安装时点「安装 cloudflared」即可（Windows 走 winget、macOS 走 brew、Linux 下官方二进制）。也可手动装：
+
+- Windows：`winget install --id Cloudflare.cloudflared -e`
+- macOS：`brew install cloudflared`
+- Linux：见 [官方下载页](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)
+
+> 穿透把控制台暴露到公网，**启用前务必先把默认密码改掉**（系统页「修改密码」）。
 
 ## 配置项（config.py，均可用环境变量覆盖）
 
@@ -128,6 +185,11 @@ export CC_ROOT=/home/you/workspace
 | GET | `/api/admin/settings` | 查看系统配置（脱敏） |
 | POST | `/api/admin/password` | 修改密码 `{old_password, new_password}` |
 | POST | `/api/admin/root` | 修改默认工作目录 `{root_dir}` |
+| GET | `/api/tunnel/status` | Cloudflare 穿透状态（是否安装/运行中/公网地址/日志） |
+| POST | `/api/tunnel/start` | 启用穿透 `{mode:"quick"\|"named", hostname?, name?, port?, autostart?}` |
+| POST | `/api/tunnel/stop` | 停止穿透 |
+| POST | `/api/tunnel/config` | 保存穿透配置（含是否随服务自动启用） |
+| POST | `/api/tunnel/install` | 后台安装 cloudflared |
 
 ## 会话回复的实现原理
 

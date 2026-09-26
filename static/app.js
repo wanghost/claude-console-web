@@ -257,6 +257,12 @@ function renderFiles(data) {
   const crumbs = buildBreadcrumb(data.path);
   let html = '<div class="fs-wrap">';
   html += '<div class="fs-breadcrumb">' + crumbs + '</div>';
+  html += '<div class="fs-toolbar">'
+    + '<button class="secondary" id="fs-new-dir">📁 新建文件夹</button>'
+    + '<button class="secondary" id="fs-new-file">📄 新建文件</button>'
+    + '<button class="secondary" id="fs-upload">⬆️ 上传文件</button>'
+    + '<input type="file" id="fs-upload-input" multiple style="display:none">'
+    + '</div>';
   html += '<div class="fs-list">';
   if (!data.entries || data.entries.length === 0) {
     html += '<div class="fs-empty">空目录</div>';
@@ -264,10 +270,11 @@ function renderFiles(data) {
     for (const e of data.entries) {
       const icon = e.is_dir ? '📁' : '📄';
       const meta = e.is_dir ? '' : fmtSize(e.size);
-      html += '<div class="fs-item ' + (e.is_dir ? 'dir' : 'file') + '" data-path="' + esc(e.path) + '" data-dir="' + e.is_dir + '">'
+      html += '<div class="fs-item ' + (e.is_dir ? 'dir' : 'file') + '" data-path="' + esc(e.path) + '" data-dir="' + e.is_dir + '" data-name="' + esc(e.name) + '">'
         + '<span class="icon">' + icon + '</span>'
         + '<span class="name">' + esc(e.name) + '</span>'
         + '<span class="meta">' + esc(meta) + '</span>'
+        + '<button class="fs-item-btn fs-rename-btn" title="重命名">✏️</button>'
         + '</div>';
     }
   }
@@ -288,6 +295,90 @@ function renderFiles(data) {
   });
   content.querySelectorAll('.crumb').forEach((c) => {
     c.addEventListener('click', () => showFiles(c.dataset.path));
+  });
+
+  // 新建文件夹
+  document.getElementById('fs-new-dir').addEventListener('click', async () => {
+    const name = prompt('新建文件夹名称：');
+    if (!name) return;
+    const full = data.path ? (data.path + '/' + name) : name;
+    try {
+      await api('/api/fs/mkdir', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: full }),
+      });
+      showFiles(data.path);
+    } catch (e) {
+      alert('新建文件夹失败：' + e.message);
+    }
+  });
+
+  // 新建文件
+  document.getElementById('fs-new-file').addEventListener('click', async () => {
+    const name = prompt('新建文件名称（含扩展名）：');
+    if (!name) return;
+    const full = data.path ? (data.path + '/' + name) : name;
+    try {
+      await api('/api/fs/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: full }),
+      });
+      openFile(full);
+    } catch (e) {
+      alert('新建文件失败：' + e.message);
+    }
+  });
+
+  // 上传文件
+  const uploadInput = document.getElementById('fs-upload-input');
+  document.getElementById('fs-upload').addEventListener('click', () => {
+    uploadInput.value = '';
+    uploadInput.click();
+  });
+  uploadInput.addEventListener('change', async () => {
+    const files = Array.from(uploadInput.files || []);
+    if (files.length === 0) return;
+    let ok = 0, fail = 0;
+    for (const f of files) {
+      const fd = new FormData();
+      fd.append('file', f, f.name);
+      fd.append('path', data.path || '');
+      try {
+        await api('/api/fs/upload', { method: 'POST', body: fd });
+        ok++;
+      } catch (e) {
+        fail++;
+        console.error('上传失败', f.name, e);
+      }
+    }
+    if (fail > 0) alert(`上传完成：成功 ${ok} 个，失败 ${fail} 个（重名文件不会覆盖，请先改名或删除）。`);
+    showFiles(data.path);
+  });
+
+  // 重命名
+  content.querySelectorAll('.fs-rename-btn').forEach((btn) => {
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const item = btn.closest('.fs-item');
+      const oldPath = item.dataset.path;
+      const oldName = item.dataset.name;
+      const newName = prompt('重命名为：', oldName);
+      if (!newName || newName === oldName) return;
+      (async () => {
+        try {
+          await api('/api/fs/rename', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: oldPath, name: newName }),
+          });
+          showFiles(data.path);
+        } catch (e) {
+          alert('重命名失败：' + e.message);
+        }
+      })();
+    });
   });
 }
 
@@ -311,9 +402,11 @@ async function openFile(path) {
     if (data.encoding === 'binary') {
       content.classList.add('chat-mode');
       content.innerHTML = '<div class="editor-wrap">'
-        + '<button class="back-btn" onclick="showFiles(currentPath)">← 返回</button>'
-        + '<div class="file-head"><span class="path">' + esc(data.path) + '</span></div>'
+        + '<div class="file-head">'
+        + '<button class="back-btn" onclick="showFiles(currentPath)">返回</button>'
+        + '</div>'
         + '<div class="binary-note">二进制文件（' + fmtSize(data.size) + '），无法预览</div>'
+        + '<div class="file-foot"><span class="path">' + esc(data.path) + '</span></div>'
         + '</div>';
       return;
     }
@@ -325,8 +418,8 @@ async function openFile(path) {
 
 function renderEditor(data) {
   let html = '<div class="editor-wrap">';
-  html += '<button class="back-btn" onclick="showFiles(currentPath)">← 返回</button>';
-  html += '<div class="file-head"><span class="path">' + esc(data.path) + '</span>'
+  html += '<div class="file-head">'
+    + '<button class="back-btn" onclick="showFiles(currentPath)">返回</button>'
     + '<button class="secondary" id="wrap-toggle" title="切换自动换行">自动换行</button>'
     + '<button class="secondary" id="edit-toggle">编辑</button>'
     + '<button id="save-btn" style="display:none">保存</button></div>';
@@ -344,6 +437,7 @@ function renderEditor(data) {
   if (data.truncated) {
     html += '<div class="truncate-note">文件过大，仅显示前 ' + fmtSize(data.size) + ' 中的一部分</div>';
   }
+  html += '<div class="file-foot"><span class="path">' + esc(data.path) + '</span></div>';
   html += '</div>'; // .editor-wrap
   content.classList.add('chat-mode');
   content.innerHTML = html;
@@ -517,7 +611,10 @@ function projectName(projectDir) {
 
 function renderSessions(sessions) {
   let html = '<div class="sess-wrap">';
-  html += '<div class="sess-toolbar"><button class="new-sess-btn" id="new-sess-btn">＋ 新建会话</button></div>';
+  html += '<div class="sess-toolbar">'
+    + '<button class="new-sess-btn" id="new-sess-btn">＋ 新建会话</button>'
+    + '<button class="sess-fav-btn" id="sess-fav-btn">⭐ 我的收藏</button>'
+    + '</div>';
   if (!sessions.length) {
     html += '<div class="fs-empty">暂无会话</div>';
   } else {
@@ -601,6 +698,8 @@ function renderSessions(sessions) {
   });
   const newBtn = document.getElementById('new-sess-btn');
   if (newBtn) newBtn.addEventListener('click', showNewSessionForm);
+  const favBtn = document.getElementById('sess-fav-btn');
+  if (favBtn) favBtn.addEventListener('click', showFavorites);
 }
 
 async function showNewSessionForm() {
@@ -727,6 +826,7 @@ async function openSession(id, opts = {}) {
   content.innerHTML = '<div class="fs-empty">加载中...</div>';
   try {
     const data = await api('/api/sessions/' + id);
+    await refreshFavCache();
     renderChat(data);
     startSessionRefresh();
   } catch (e) {
@@ -788,9 +888,11 @@ function updateChatMessages(data) {
 function renderMessage(m) {
   let html = '<div class="msg ' + m.role + ' md-body" id="msg-' + esc(m.id || '') + '">' + renderMarkdown(m.text) + '</div>';
   if (m.role === 'user') {
+    const fav = isFavorited(currentSessionId, m.id);
     html += '<div class="msg-actions">'
       + '<button class="msg-action-btn" data-action="copy" data-text="' + esc(m.text) + '">复制</button>'
       + '<button class="msg-action-btn" data-action="edit" data-text="' + esc(m.text) + '">编辑</button>'
+      + '<button class="msg-action-btn fav-btn' + (fav ? ' favorited' : '') + '" data-action="fav" data-msg-id="' + esc(m.id || '') + '" data-text="' + esc(m.text) + '" data-ts="' + esc(m.ts || '') + '">' + (fav ? '已收藏' : '收藏') + '</button>'
       + '</div>';
   }
   return html;
@@ -857,7 +959,7 @@ function renderChat(data) {
   if (historyBtn) {
     historyBtn.addEventListener('click', () => showHistory(currentSessionId));
   }
-  // 消息操作按钮（复制/编辑）事件委托
+  // 消息操作按钮（复制/编辑/收藏）事件委托
   const chatEl = content.querySelector('.chat');
   if (chatEl) {
     chatEl.addEventListener('click', (e) => {
@@ -869,6 +971,8 @@ function renderChat(data) {
         copyText(text);
       } else if (action === 'edit') {
         editMessage(text);
+      } else if (action === 'fav') {
+        toggleFavorite(currentSessionId, btn.dataset.msgId, text, btn.dataset.ts, btn);
       }
     });
     // 用户滚动时：判断是否处于底部，决定“回到底部”按钮显隐；并同步“我的发言”浮动条
@@ -1035,6 +1139,114 @@ function flashHint(msg) {
   setTimeout(() => hint.classList.remove('show'), 1200);
 }
 
+// ---- 收藏（跨会话，SQLite 服务端持久化）----
+// 内存缓存：favIdSet 为已收藏的 'sessionId::msgId' 集合；favList 为完整收藏列表。
+let favIdSet = new Set();
+let favList = [];
+
+// 收藏唯一标识：sessionId + msgId
+function favKey(sessionId, msgId) {
+  return sessionId + '::' + msgId;
+}
+
+async function refreshFavCache() {
+  try {
+    const data = await api('/api/favorites');
+    favList = data.favorites || [];
+    favIdSet = new Set(favList.map((f) => favKey(f.sessionId, f.msgId)));
+  } catch (e) {
+    favList = [];
+    favIdSet = new Set();
+  }
+}
+
+function isFavorited(sessionId, msgId) {
+  return favIdSet.has(favKey(sessionId, String(msgId)));
+}
+
+async function toggleFavorite(sessionId, msgId, text, ts, btn) {
+  if (!sessionId || msgId == null) return;
+  const key = favKey(sessionId, String(msgId));
+  const favorited = favIdSet.has(key);
+  try {
+    if (favorited) {
+      await api('/api/favorites?session_id=' + encodeURIComponent(sessionId) + '&msg_id=' + encodeURIComponent(String(msgId)), { method: 'DELETE' });
+      favIdSet.delete(key);
+      favList = favList.filter((f) => favKey(f.sessionId, f.msgId) !== key);
+      flashHint('已取消收藏');
+      if (btn) { btn.classList.remove('favorited'); btn.textContent = '收藏'; }
+    } else {
+      await api('/api/favorites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId, msg_id: String(msgId), text: text || '', ts: ts || '' }),
+      });
+      favIdSet.add(key);
+      favList.unshift({ sessionId: sessionId, msgId: String(msgId), text: text || '', ts: ts || '', time: '' });
+      flashHint('已收藏');
+      if (btn) { btn.classList.add('favorited'); btn.textContent = '已收藏'; }
+    }
+  } catch (e) {
+    flashHint('操作失败：' + e.message);
+  }
+}
+
+async function showFavorites() {
+  currentView = 'favorites';
+  stopPoll();
+  stopSessionRefresh();
+  content.classList.remove('chat-mode');
+  content.innerHTML = '<div class="fs-empty">加载中...</div>';
+  await refreshFavCache();
+  renderFavorites();
+}
+
+function renderFavorites() {
+  const list = favList;
+  content.classList.add('chat-mode');
+  let html = '<div class="fs-wrap">';
+  html += '<div class="chat-topbar">'
+    + '<button class="back-btn" id="fav-back-btn">← 返回会话列表</button>'
+    + '</div>';
+  html += '<div class="fs-breadcrumb"><span>我的收藏（共 ' + list.length + ' 条）</span></div>';
+  html += '<div class="fs-list">';
+  if (!list.length) {
+    html += '<div class="fs-empty">还没有收藏。在会话中点击发言下方的「收藏」即可加入这里。</div>';
+  } else {
+    for (const f of list) {
+      const title = (f.text || '').slice(0, 60) || '（无内容）';
+      html += '<div class="fs-item fav-item" data-session-id="' + esc(f.sessionId) + '" data-msg-id="' + esc(f.msgId) + '">'
+        + '<span class="icon">⭐</span>'
+        + '<span class="name">' + esc(title) + '</span>'
+        + '<span class="meta">' + esc(f.ts || '') + '</span>'
+        + '<button class="fs-item-btn fav-remove-btn" data-session-id="' + esc(f.sessionId) + '" data-msg-id="' + esc(f.msgId) + '" title="取消收藏">🗑️</button>'
+        + '</div>';
+    }
+  }
+  html += '</div>';
+  html += '</div>';
+  content.innerHTML = html;
+
+  const backBtn = document.getElementById('fav-back-btn');
+  if (backBtn) backBtn.addEventListener('click', () => showSessions());
+
+  // 点击收藏项：打开会话并定位到对应消息
+  content.querySelectorAll('.fav-item').forEach((item) => {
+    item.addEventListener('click', () => {
+      openSession(item.dataset.sessionId, { scrollToMsgId: item.dataset.msgId });
+    });
+  });
+
+  // 取消收藏按钮（阻止冒泡）
+  content.querySelectorAll('.fav-remove-btn').forEach((btn) => {
+    btn.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      await toggleFavorite(btn.dataset.sessionId, btn.dataset.msgId);
+      renderFavorites();
+    });
+  });
+}
+
 // ---- 对话历史（当前会话中我说过的话）----
 let historyData = null;
 
@@ -1049,6 +1261,7 @@ async function showHistory(sessionId) {
       title: userMsgs.length ? userMsgs[0].text.slice(0, 40) : '会话',
       messages: userMsgs,
     };
+    await refreshFavCache();
     renderHistory();
   } catch (e) {
     alert('加载对话历史失败：' + e.message);
@@ -1073,6 +1286,7 @@ function renderHistory() {
     html += '<div class="fs-empty">本会话还没有你说过的话</div>';
   } else {
     for (const m of msgs) {
+      const fav = isFavorited(sid, m.id);
       html += '<div class="history-item" data-msg-id="' + esc(m.id || '') + '">'
         + '<div class="history-item-main">'
         + '<div class="history-ts">' + esc(m.ts || '') + '</div>'
@@ -1081,6 +1295,7 @@ function renderHistory() {
         + '<div class="history-item-actions">'
         + '<button class="history-action-btn" data-action="copy" data-text="' + esc(m.text) + '">复制</button>'
         + '<button class="history-action-btn" data-action="jump" data-id="' + esc(m.id || '') + '">跳到发言</button>'
+        + '<button class="history-action-btn fav-btn' + (fav ? ' favorited' : '') + '" data-action="fav" data-id="' + esc(m.id || '') + '" data-text="' + esc(m.text) + '" data-ts="' + esc(m.ts || '') + '">' + (fav ? '已收藏' : '收藏') + '</button>'
         + '</div>'
         + '</div>';
     }
@@ -1103,14 +1318,16 @@ function renderHistory() {
   document.getElementById('history-download').addEventListener('click', () => {
     downloadHistoryMd();
   });
-  // 单条发言操作（复制/跳到发言）事件委托
+  // 单条发言操作（复制/跳到发言/收藏）事件委托
   content.querySelectorAll('.history-action-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       if (btn.dataset.action === 'copy') {
         copyText(btn.dataset.text);
       } else if (btn.dataset.action === 'jump') {
         // 打开会话详情并定位到对应消息
         openSession(sid, { scrollToMsgId: btn.dataset.id });
+      } else if (btn.dataset.action === 'fav') {
+        await toggleFavorite(sid, btn.dataset.id, btn.dataset.text, btn.dataset.ts, btn);
       }
     });
   });
@@ -1293,15 +1510,20 @@ async function showAdmin() {
   content.innerHTML = '<div class="fs-empty">加载中...</div>';
   try {
     const data = await api('/api/admin/settings');
-    renderAdmin(data);
+    let tun = null;
+    try { tun = await api('/api/tunnel/status'); } catch (e) { /* 忽略 */ }
+    renderAdmin(data, tun);
   } catch (e) {
     content.innerHTML = '<div class="fs-empty">' + esc(e.message) + '</div>';
   }
 }
 
-function renderAdmin(data) {
+function renderAdmin(data, tun) {
   let html = '<div class="admin-section">';
   html += '<h2>系统设置</h2>';
+
+  // 外网穿透（Cloudflare Tunnel）
+  html += '<div class="admin-card" id="tunnel-box"></div>';
 
   // 账号信息
   html += '<div class="admin-card">';
@@ -1347,6 +1569,8 @@ function renderAdmin(data) {
 
   html += '</div>';
   content.innerHTML = html;
+
+  renderTunnelBox(tun);
 
   // 修改密码
   document.getElementById('change-pwd-btn').addEventListener('click', async () => {
@@ -1446,6 +1670,324 @@ function renderAdmin(data) {
       btn.disabled = false;
     }
   });
+}
+
+// ---- 外网穿透（Cloudflare Tunnel）----
+// 面板草稿值：切换模式/重渲染时保留用户已填内容
+let tunnelDraft = null;
+
+function renderTunnelBox(t) {
+  const box = document.getElementById('tunnel-box');
+  if (!box) return;
+  t = t || {};
+  if (!tunnelDraft) {
+    tunnelDraft = {
+      mode: t.mode || 'quick',
+      hostname: t.hostname || '',
+      name: t.name || 'ccw-console',
+      port: t.port || 8080,
+      autostart: !!t.autostart,
+    };
+  }
+  const d = tunnelDraft;
+  const installed = !!t.installed;
+  const running = !!t.running;
+  const showQr = !!(d.qrOpen && t.url);
+
+  let h = '';
+  h += '<div class="admin-card-title">外网穿透（Cloudflare）</div>';
+  h += '<div class="tunnel-status">';
+  h += '<span class="tunnel-dot ' + (running ? 'on' : (installed ? '' : 'off')) + '"></span>';
+  h += '<span>' + (running ? '已启用' : (t.installing ? '正在安装 cloudflared…' : (installed ? '未启用' : '未安装 cloudflared'))) + '</span>';
+  if (installed && t.cloudflared_version) {
+    h += '<span class="tunnel-dim">· ' + esc(t.cloudflared_version) + '</span>';
+  }
+  h += '</div>';
+
+  if (t.error) {
+    h += '<div class="tunnel-err">' + esc(t.error) + '</div>';
+  }
+
+  // 公网地址
+  if (running && t.url) {
+    h += '<div class="tunnel-url">';
+    h += '<a href="' + esc(t.url) + '" target="_blank" rel="noreferrer">' + esc(t.url) + '</a>';
+    h += '<button class="tunnel-mini" id="tun-copy">复制</button>';
+    h += '<button class="tunnel-mini" id="tun-open">打开</button>';
+    h += '<button class="tunnel-mini" id="tun-qr">' + (showQr ? '收起二维码' : '二维码') + '</button>';
+    h += '</div>';
+    h += '<div class="tunnel-qr" id="tun-qr-box"' + (showQr ? '' : ' style="display:none"') + '>';
+    h += '<canvas id="tun-qr-canvas"></canvas>';
+    h += '<div class="tunnel-qr-tip">手机扫码即可打开控制台</div>';
+    h += '<button class="tunnel-mini" id="tun-qr-download">下载二维码</button>';
+    h += '</div>';
+  }
+
+  // 模式选择
+  h += '<div class="tunnel-mode">';
+  h += '<label><input type="radio" name="tun-mode" value="quick" ' + (d.mode === 'quick' ? 'checked' : '') + '> 随机域名（免配置，每次启用会变）</label>';
+  h += '<label><input type="radio" name="tun-mode" value="named" ' + (d.mode === 'named' ? 'checked' : '') + '> 固定域名（需域名托管在 Cloudflare）</label>';
+  h += '</div>';
+
+  if (d.mode === 'named') {
+    h += '<label>访问域名（如 ccw.example.com）</label>';
+    h += '<input type="text" id="tun-hostname" placeholder="ccw.example.com" value="' + esc(d.hostname) + '">';
+    h += '<label>Tunnel 名称</label>';
+    h += '<input type="text" id="tun-name" placeholder="ccw-console" value="' + esc(d.name) + '">';
+    if (!t.cert_ready) {
+      h += '<div class="tunnel-hint">固定域名需先在本机终端执行一次 <code>cloudflared tunnel login</code> 完成授权。</div>';
+    }
+  }
+
+  h += '<label>转发到本机端口</label>';
+  h += '<input type="number" id="tun-port" min="1" max="65535" value="' + esc(String(d.port)) + '">';
+  h += '<label class="tunnel-check"><input type="checkbox" id="tun-autostart" ' + (d.autostart ? 'checked' : '') + '> 服务启动时自动启用穿透</label>';
+
+  h += '<div class="tunnel-actions">';
+  if (!installed) {
+    h += '<button id="tun-install" class="tunnel-primary"' + (t.installing ? ' disabled' : '') + '>' + (t.installing ? '安装中…' : '安装 cloudflared') + '</button>';
+  } else {
+    h += '<button id="tun-start" class="tunnel-primary"' + (running ? ' disabled' : '') + '>' + (running ? '已启用' : '启用穿透') + '</button>';
+    h += '<button id="tun-stop"' + (running ? '' : ' disabled') + '>停止</button>';
+    h += '<button id="tun-refresh">刷新状态</button>';
+  }
+  h += '</div>';
+  h += '<div class="admin-msg" id="tun-msg"></div>';
+
+  if (t.log && t.log.length) {
+    h += '<div class="tunnel-log">' + esc(t.log.join('\n')) + '</div>';
+  }
+  h += '<div class="tunnel-hint">启用后即可通过 https 域名从公网访问本控制台，无需公网 IP、无需路由器放行端口。请务必先修改默认密码。</div>';
+
+  box.innerHTML = h;
+  bindTunnelBox(t);
+}
+
+function bindTunnelBox(t) {
+  const box = document.getElementById('tunnel-box');
+  if (!box) return;
+  const msgEl = () => document.getElementById('tun-msg');
+  const setMsg = (text, ok) => {
+    const el = msgEl();
+    if (!el) return;
+    el.textContent = text;
+    el.style.color = ok ? 'var(--accent-dark)' : '#d64545';
+  };
+
+  const draftFromInputs = () => {
+    const hostEl = document.getElementById('tun-hostname');
+    const nameEl = document.getElementById('tun-name');
+    const portEl = document.getElementById('tun-port');
+    const autoEl = document.getElementById('tun-autostart');
+    if (hostEl) tunnelDraft.hostname = hostEl.value.trim();
+    if (nameEl) tunnelDraft.name = nameEl.value.trim();
+    if (portEl) tunnelDraft.port = parseInt(portEl.value, 10) || tunnelDraft.port;
+    if (autoEl) tunnelDraft.autostart = autoEl.checked;
+    return tunnelDraft;
+  };
+
+  box.querySelectorAll('input[name="tun-mode"]').forEach((el) => {
+    el.addEventListener('change', () => {
+      draftFromInputs();
+      tunnelDraft.mode = el.value;
+      renderTunnelBox(t);
+    });
+  });
+
+  const copyBtn = document.getElementById('tun-copy');
+  if (copyBtn) {
+    copyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(t.url);
+        setMsg('已复制公网地址', true);
+      } catch (e) {
+        setMsg('复制失败，请手动选中地址复制', false);
+      }
+    });
+  }
+  const openBtn = document.getElementById('tun-open');
+  if (openBtn) openBtn.addEventListener('click', () => window.open(t.url, '_blank'));
+
+  // 二维码：展开/收起（状态存 draft，避免状态轮询重渲染后丢失）
+  const qrBtn = document.getElementById('tun-qr');
+  if (qrBtn) {
+    qrBtn.addEventListener('click', () => {
+      tunnelDraft.qrOpen = !tunnelDraft.qrOpen;
+      const box = document.getElementById('tun-qr-box');
+      if (tunnelDraft.qrOpen) {
+        if (!drawTunnelQR(t.url)) {
+          tunnelDraft.qrOpen = false;
+          setMsg('二维码组件未加载，请刷新页面重试', false);
+          return;
+        }
+        if (box) box.style.display = '';
+        qrBtn.textContent = '收起二维码';
+      } else {
+        if (box) box.style.display = 'none';
+        qrBtn.textContent = '二维码';
+      }
+    });
+  }
+  const qrDlBtn = document.getElementById('tun-qr-download');
+  if (qrDlBtn) {
+    qrDlBtn.addEventListener('click', () => {
+      const canvas = document.getElementById('tun-qr-canvas');
+      if (!canvas) return;
+      try {
+        const a = document.createElement('a');
+        a.href = canvas.toDataURL('image/png');
+        a.download = 'ccw-qrcode.png';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      } catch (e) {
+        setMsg('下载失败：' + e.message, false);
+      }
+    });
+  }
+
+  const installBtn = document.getElementById('tun-install');
+  if (installBtn) {
+    installBtn.addEventListener('click', async () => {
+      installBtn.disabled = true;
+      setMsg('正在后台安装 cloudflared，请稍候刷新…', true);
+      try {
+        await api('/api/tunnel/install', { method: 'POST' });
+      } catch (e) {
+        setMsg('安装请求失败：' + e.message, false);
+        return;
+      }
+      let tries = 0;
+      const timer = setInterval(async () => {
+        tries += 1;
+        try {
+          const st = await api('/api/tunnel/status');
+          if (st.installed || tries >= 30) {
+            clearInterval(timer);
+            renderTunnelBox(st);
+          }
+        } catch (e) { /* 忽略单次失败 */ }
+        if (tries >= 30) clearInterval(timer);
+      }, 4000);
+    });
+  }
+
+  const startBtn = document.getElementById('tun-start');
+  if (startBtn) {
+    startBtn.addEventListener('click', async () => {
+      const d = draftFromInputs();
+      startBtn.disabled = true;
+      setMsg('正在启用…', true);
+      try {
+        const res = await api('/api/tunnel/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mode: d.mode, hostname: d.hostname, name: d.name,
+            port: d.port, autostart: d.autostart,
+          }),
+        });
+        if (res.running) {
+          setMsg('穿透已启用', true);
+        } else {
+          setMsg('已触发启动，等待地址生成…', true);
+        }
+        // 轮询刷新，直到拿到地址或超时
+        let tries = 0;
+        const timer = setInterval(async () => {
+          tries += 1;
+          try {
+            const st = await api('/api/tunnel/status');
+            renderTunnelBox(st);
+            if ((st.running && st.url) || tries >= 10) clearInterval(timer);
+          } catch (e) { /* 忽略 */ }
+          if (tries >= 10) clearInterval(timer);
+        }, 2000);
+      } catch (e) {
+        setMsg('启用失败：' + e.message, false);
+        startBtn.disabled = false;
+      }
+    });
+  }
+
+  const stopBtn = document.getElementById('tun-stop');
+  if (stopBtn) {
+    stopBtn.addEventListener('click', async () => {
+      stopBtn.disabled = true;
+      try {
+        await api('/api/tunnel/stop', { method: 'POST' });
+        const st = await api('/api/tunnel/status');
+        renderTunnelBox(st);
+        setMsg('穿透已停止', true);
+      } catch (e) {
+        setMsg('停止失败：' + e.message, false);
+      }
+    });
+  }
+
+  const refreshBtn = document.getElementById('tun-refresh');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', async () => {
+      const st = await api('/api/tunnel/status');
+      renderTunnelBox(st);
+    });
+  }
+
+  const autoEl = document.getElementById('tun-autostart');
+  if (autoEl) {
+    autoEl.addEventListener('change', async () => {
+      const d = draftFromInputs();
+      try {
+        await api('/api/tunnel/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mode: d.mode, hostname: d.hostname, name: d.name,
+            port: d.port, autostart: d.autostart,
+          }),
+        });
+        setMsg(d.autostart ? '已开启：下次服务启动自动启用穿透' : '已关闭自动启用', true);
+      } catch (e) {
+        setMsg('保存失败：' + e.message, false);
+      }
+    });
+  }
+
+  // 重渲染后若二维码处于展开状态，重新绘制
+  if (t.url && tunnelDraft.qrOpen) drawTunnelQR(t.url);
+}
+
+// 把文本画成二维码（纠错级别 M，4 模块静区，8px/模块）
+function drawTunnelQR(text) {
+  const canvas = document.getElementById('tun-qr-canvas');
+  if (!canvas || !text || typeof qrcode !== 'function') return null;
+  try {
+    const qr = qrcode(0, 'M');
+    qr.addData(text);
+    qr.make();
+    const n = qr.getModuleCount();
+    const scale = 8;
+    const quiet = 4;
+    const size = (n + quiet * 2) * scale;
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, size, size);
+    ctx.fillStyle = '#000000';
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) {
+        if (qr.isDark(r, c)) {
+          ctx.fillRect((c + quiet) * scale, (r + quiet) * scale, scale, scale);
+        }
+      }
+    }
+    canvas.style.width = '192px';
+    canvas.style.height = '192px';
+    return canvas;
+  } catch (e) {
+    return null;
+  }
 }
 
 // 启动：加载刷新间隔设置后，默认进入会话视图

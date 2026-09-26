@@ -5,3 +5,4 @@ data/
 console.db
 console.db-shm
 console.db-wal
+cloudflared/

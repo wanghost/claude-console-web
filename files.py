@@ -227,3 +227,65 @@ def write_file(rel_path: str, content: str) -> dict:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     return {"path": rel_path, "written": len(content)}
+
+
+def mkdir_dir(rel_path: str) -> dict:
+    """在指定相对路径下创建目录。rel_path 为要创建的目录路径。"""
+    path = _resolve(rel_path)
+    if path.exists():
+        raise FileExistsError(f"已存在: {rel_path}")
+    path.mkdir(parents=True)
+    return {"path": rel_path, "created": True}
+
+
+def create_file(rel_path: str) -> dict:
+    """在指定相对路径下创建空文件。rel_path 为要创建的文件路径。"""
+    path = _resolve(rel_path)
+    if path.exists():
+        raise FileExistsError(f"已存在: {rel_path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.touch()
+    return {"path": rel_path, "created": True}
+
+
+def rename(old_rel_path: str, new_name: str) -> dict:
+    """重命名文件或目录。new_name 为新的名称（不含路径）。"""
+    if not new_name or new_name in ("", "."):
+        raise ValueError("名称不能为空")
+    if "/" in new_name or "\\" in new_name:
+        raise ValueError("名称不能包含路径分隔符")
+    src = _resolve(old_rel_path)
+    if not src.exists():
+        raise FileNotFoundError(f"不存在: {old_rel_path}")
+    dst = src.parent / new_name
+    if dst.exists():
+        raise FileExistsError(f"已存在: {new_name}")
+    src.rename(dst)
+    new_rel = abs_to_rel(str(dst))
+    return {"old_path": old_rel_path, "path": new_rel, "renamed": True}
+
+
+def upload_file(dir_rel_path: str, filename: str, data: bytes) -> dict:
+    """上传文件到指定目录。filename 为原始文件名（不含路径）。
+
+    - 目标目录 dir_rel_path 必须已存在且为目录。
+    - 文件已存在则报错（不覆盖，避免误覆盖）。
+    - 文件名只取 basename，防路径穿越。
+    """
+    if not filename or filename in ("", "."):
+        raise ValueError("文件名不能为空")
+    # 只保留 basename，丢弃任何路径成分（防 ../ 穿越）
+    safe_name = Path(filename).name
+    if not safe_name or safe_name in ("", ".", ".."):
+        raise ValueError("文件名非法")
+    dir_path = _resolve(dir_rel_path)
+    if not dir_path.exists():
+        raise FileNotFoundError(f"目录不存在: {dir_rel_path}")
+    if not dir_path.is_dir():
+        raise NotADirectoryError(f"不是目录: {dir_rel_path}")
+    dst = dir_path / safe_name
+    if dst.exists():
+        raise FileExistsError(f"文件已存在: {safe_name}")
+    dst.write_bytes(data)
+    new_rel = abs_to_rel(str(dst))
+    return {"path": new_rel, "name": safe_name, "size": len(data), "uploaded": True}
